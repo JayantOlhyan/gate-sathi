@@ -1,0 +1,33 @@
+{
+  "app": {
+    "title": "GateSathi",
+    "subtitle": "Government School Visitor Entry System",
+    "languageToggle": "हिन्दी",
+    "logout": "Sign Out"
+  },
+  "login": {
+    "heading": "Sign In",
+    "description": "Enter your 10-digit mobile number and password",
+    "phoneLabel": "Mobile Number",
+    "phonePlaceholder": "9876543210",
+    "passwordLabel": "Password",
+    "passwordPlaceholder": "••••••••",
+    "submit": "Sign In",
+    "submitting": "Signing in...",
+    "invalidCredentials": "Invalid mobile number or password.",
+    "lockedAccount": "Account locked for 15 minutes after 5 failed login attempts.",
+    "validationError": "Please enter a valid 10-digit mobile number and password."
+  },
+  "gate": {
+    "title": "Gate Entry Desk",
+    "badge": "Security Guard",
+    "placeholder": "Gate entry module (Phase 1 — Foundation only. Visitor entry flow will be added in Phase 2).",
+    "assignedSchool": "Assigned School ID"
+  },
+  "dashboard": {
+    "title": "Admin Dashboard",
+    "badge": "Principal / Admin",
+    "placeholder": "Dashboard module (Phase 1 — Foundation only. Analytics will be added in Phase 2).",
+    "assignedSchool": "Assigned School ID"
+  }
+}

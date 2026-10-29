@@ -1,0 +1,50 @@
+import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
+import { AppHeader } from '@/components/app-header';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
+
+export default async function GatePage() {
+  let user;
+  let activeSchoolId = '';
+
+  try {
+    user = await requireRole('guard', 'principal', 'super_admin');
+    const primarySchoolId = user.schoolIds[0];
+    if (primarySchoolId) {
+      const access = await requireSchoolAccess(primarySchoolId);
+      activeSchoolId = access.schoolId;
+    }
+  } catch (error) {
+    if (error instanceof RbacError && error.status === 401) {
+      redirect('/login');
+    }
+    redirect('/dashboard');
+  }
+
+  const t = await getTranslations('gate');
+
+  return (
+    <div className="flex flex-1 flex-col">
+      <AppHeader showLogout />
+      <main className="flex-1 space-y-4 p-4">
+        <Card>
+          <CardHeader>
+            <span className="inline-block w-fit rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+              {t('badge')}
+            </span>
+            <CardTitle className="pt-1">{t('title')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-slate-600">
+            <p>{t('placeholder')}</p>
+            {activeSchoolId && (
+              <p className="rounded bg-slate-100 p-2 font-mono text-xs text-slate-700">
+                {t('assignedSchool')}: {activeSchoolId}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}
