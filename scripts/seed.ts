@@ -3,28 +3,42 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { connectDB } from '@/lib/db';
 import { School, User, Student } from '@/models';
-import { loginSchema } from '@/lib/validations';
+import { loginSchema, studentInputSchema } from '@/lib/validations';
 
 const seedEnvSchema = z.object({
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required to run seed'),
 });
 
+export function assertNotProduction(nodeEnv: string | undefined = process.env.NODE_ENV) {
+  if (nodeEnv === 'production') {
+    throw new Error('Refusing to run seed script when NODE_ENV=production');
+  }
+}
+
 const DUMMY_STUDENTS = [
-  { name: 'Aarav Kumar', className: '5', section: 'A', rollNumber: '101', guardianPhone: '9810000001' },
-  { name: 'Priya Sharma', className: '5', section: 'A', rollNumber: '102', guardianPhone: '9810000002' },
-  { name: 'Rohan Verma', className: '6', section: 'A', rollNumber: '201', guardianPhone: '9810000003' },
-  { name: 'Ananya Singh', className: '6', section: 'B', rollNumber: '202', guardianPhone: '9810000004' },
-  { name: 'Kabir Yadav', className: '7', section: 'A', rollNumber: '301', guardianPhone: '9810000005' },
-  { name: 'Meera Devi', className: '7', section: 'B', rollNumber: '302', guardianPhone: '9810000006' },
-  { name: 'Aditya Patel', className: '8', section: 'A', rollNumber: '401', guardianPhone: '9810000007' },
-  { name: 'Kavya Gupta', className: '8', section: 'A', rollNumber: '402', guardianPhone: '9810000008' },
-  { name: 'Vikram Joshi', className: '9', section: 'A', rollNumber: '501', guardianPhone: '9810000009' },
-  { name: 'Sunita Chauhan', className: '10', section: 'A', rollNumber: '601', guardianPhone: '9810000010' },
+  { admissionNo: 'ADM-2026-001', name: 'Aarav Kumar', className: '5', section: 'A', rollNumber: '101', guardianPhone: '9810000001' },
+  { admissionNo: 'ADM-2026-002', name: 'Priya Sharma', className: '5', section: 'A', rollNumber: '102', guardianPhone: '9810000002' },
+  { admissionNo: 'ADM-2026-003', name: 'Rohan Verma', className: '6', section: 'A', rollNumber: '201', guardianPhone: '9810000003' },
+  { admissionNo: 'ADM-2026-004', name: 'Ananya Singh', className: '6', section: 'B', rollNumber: '202', guardianPhone: '9810000004' },
+  { admissionNo: 'ADM-2026-005', name: 'Kabir Yadav', className: '7', section: 'A', rollNumber: '301', guardianPhone: '9810000005' },
+  { admissionNo: 'ADM-2026-006', name: 'Meera Devi', className: '7', section: 'B', rollNumber: '302', guardianPhone: '9810000006' },
+  { admissionNo: 'ADM-2026-007', name: 'Aditya Patel', className: '8', section: 'A', rollNumber: '401', guardianPhone: '9810000007' },
+  { admissionNo: 'ADM-2026-008', name: 'Kavya Gupta', className: '8', section: 'A', rollNumber: '402', guardianPhone: '9810000008' },
+  { admissionNo: 'ADM-2026-009', name: 'Vikram Joshi', className: '9', section: 'A', rollNumber: '501', guardianPhone: '9810000009' },
+  { admissionNo: 'ADM-2026-010', name: 'Sunita Chauhan', className: '10', section: 'A', rollNumber: '601', guardianPhone: '9810000010' },
 ];
 
 export async function runSeed() {
+  assertNotProduction(process.env.NODE_ENV);
   seedEnvSchema.parse({ MONGODB_URI: process.env.MONGODB_URI });
   await connectDB();
+
+  // Drop legacy index if it exists from earlier dev runs
+  try {
+    await Student.collection.dropIndex('schoolId_1_className_1_section_1_rollNumber_1');
+  } catch {
+    // Index may not exist; safe to ignore
+  }
 
   const pilotSchool = await School.findOneAndUpdate(
     { udiseCode: '09150100101' },
@@ -79,9 +93,12 @@ export async function runSeed() {
           passwordHash,
           role: u.role,
           schoolIds: u.schoolIds,
-          failedLoginAttempts: 0,
-          lockUntil: null,
+          tokenVersion: 0,
           isActive: true,
+        },
+        $unset: {
+          failedLoginAttempts: 1,
+          lockUntil: 1,
         },
       },
       { upsert: true, new: true }
@@ -89,21 +106,25 @@ export async function runSeed() {
   }
 
   for (const s of DUMMY_STUDENTS) {
+    const validatedStudent = studentInputSchema.parse({
+      ...s,
+      schoolId: String(pilotSchool._id),
+    });
+
     await Student.findOneAndUpdate(
       {
         schoolId: pilotSchool._id,
-        className: s.className,
-        section: s.section,
-        rollNumber: s.rollNumber,
+        admissionNo: validatedStudent.admissionNo,
       },
       {
         $set: {
           schoolId: pilotSchool._id,
-          name: s.name,
-          className: s.className,
-          section: s.section,
-          rollNumber: s.rollNumber,
-          guardianPhone: s.guardianPhone,
+          admissionNo: validatedStudent.admissionNo,
+          name: validatedStudent.name,
+          className: validatedStudent.className,
+          section: validatedStudent.section,
+          rollNumber: validatedStudent.rollNumber,
+          guardianPhone: validatedStudent.guardianPhone,
           isActive: true,
         },
       },

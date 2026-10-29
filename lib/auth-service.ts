@@ -1,20 +1,17 @@
 import bcrypt from 'bcryptjs';
 import { connectDB } from '@/lib/db';
+import {
+  consumeLoginAttempt,
+  getRateLimiter,
+  RateLimitError,
+} from '@/lib/rate-limit';
 import { loginSchema, type Role } from '@/lib/validations';
 import { User } from '@/models/User';
 
-export const MAX_FAILED_ATTEMPTS = 5;
-export const LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+export { RateLimitError };
 
-export class AuthLockoutError extends Error {
-  status = 423;
-  lockUntil: Date;
-  constructor(lockUntil: Date) {
-    super('Account is temporarily locked due to too many failed login attempts');
-    this.name = 'AuthLockoutError';
-    this.lockUntil = lockUntil;
-  }
-}
+export const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60; // 8 hours
+export const TOKEN_RECHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 export interface AuthenticatedUser {
   id: string;
@@ -22,56 +19,46 @@ export interface AuthenticatedUser {
   phone: string;
   role: Role;
   schoolIds: string[];
+  tokenVersion: number;
 }
 
 export async function authenticateWithPhoneAndPassword(
   rawCredentials: unknown,
-  deps?: { skipDbConnect?: boolean }
+  deps?: {
+    ip?: string;
+    skipDbConnect?: boolean;
+    skipRateLimit?: boolean;
+    nowMs?: number;
+  }
 ): Promise<AuthenticatedUser | null> {
   const parsed = loginSchema.safeParse(rawCredentials);
   if (!parsed.success) {
     return null;
   }
 
+  const { phone, password } = parsed.data;
+  const ip = deps?.ip?.trim() || '127.0.0.1';
+
+  if (!deps?.skipRateLimit) {
+    await consumeLoginAttempt(phone, ip, deps?.nowMs);
+  }
+
   if (!deps?.skipDbConnect) {
     await connectDB();
   }
 
-  const { phone, password } = parsed.data;
   const user = await User.findOne({ phone, isActive: true });
   if (!user) {
     return null;
   }
 
-  const now = new Date();
-  if (user.lockUntil && user.lockUntil > now) {
-    throw new AuthLockoutError(user.lockUntil);
-  }
-
-  // Reset expired lock window before evaluating new attempt
-  if (user.lockUntil && user.lockUntil <= now) {
-    user.failedLoginAttempts = 0;
-    user.lockUntil = null;
-  }
-
   const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
   if (!isPasswordValid) {
-    user.failedLoginAttempts += 1;
-    if (user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
-      user.lockUntil = new Date(now.getTime() + LOCK_DURATION_MS);
-    }
-    await user.save();
-
-    if (user.lockUntil) {
-      throw new AuthLockoutError(user.lockUntil);
-    }
     return null;
   }
 
-  if (user.failedLoginAttempts > 0 || user.lockUntil !== null) {
-    user.failedLoginAttempts = 0;
-    user.lockUntil = null;
-    await user.save();
+  if (!deps?.skipRateLimit) {
+    await getRateLimiter().reset(`login:phone_ip:${phone}:${ip}`);
   }
 
   return {
@@ -80,6 +67,79 @@ export async function authenticateWithPhoneAndPassword(
     phone: user.phone,
     role: user.role,
     schoolIds: user.schoolIds.map((id) => String(id)),
+    tokenVersion: user.tokenVersion ?? 0,
+  };
+}
+
+export interface JwtTokenState extends Record<string, unknown> {
+  id?: string;
+  phone?: string;
+  role?: Role;
+  schoolIds?: string[];
+  tokenVersion?: number;
+  lastCheckedAt?: number;
+  invalidated?: boolean;
+}
+
+export async function verifyAndRefreshJwtToken(
+  token: JwtTokenState,
+  user?: AuthenticatedUser,
+  deps?: { nowMs?: number; skipDbConnect?: boolean }
+): Promise<JwtTokenState> {
+  const nowMs = deps?.nowMs ?? Date.now();
+
+  if (user) {
+    return {
+      ...token,
+      id: user.id,
+      phone: user.phone,
+      role: user.role,
+      schoolIds: user.schoolIds,
+      tokenVersion: user.tokenVersion ?? 0,
+      lastCheckedAt: nowMs,
+      invalidated: false,
+    };
+  }
+
+  if (token.invalidated || !token.id) {
+    return { ...token, invalidated: true };
+  }
+
+  const lastCheckedAt =
+    typeof token.lastCheckedAt === 'number' ? token.lastCheckedAt : 0;
+
+  // Re-check user.isActive and tokenVersion against DB at most once every 5 minutes
+  if (nowMs - lastCheckedAt < TOKEN_RECHECK_INTERVAL_MS) {
+    return token;
+  }
+
+  if (!deps?.skipDbConnect) {
+    await connectDB();
+  }
+
+  const dbUser = await User.findById(token.id)
+    .select('isActive tokenVersion role schoolIds')
+    .lean();
+
+  if (
+    !dbUser ||
+    !dbUser.isActive ||
+    (dbUser.tokenVersion ?? 0) !== (token.tokenVersion ?? 0)
+  ) {
+    return {
+      ...token,
+      id: undefined,
+      invalidated: true,
+    };
+  }
+
+  return {
+    ...token,
+    role: dbUser.role,
+    schoolIds: dbUser.schoolIds.map((id) => String(id)),
+    tokenVersion: dbUser.tokenVersion ?? 0,
+    lastCheckedAt: nowMs,
+    invalidated: false,
   };
 }
 

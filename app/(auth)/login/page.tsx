@@ -6,7 +6,7 @@ import { LoginForm } from './login-form';
 
 export default async function LoginPage() {
   const session = await auth();
-  if (session?.user?.role) {
+  if (session?.user?.id && session.user.role) {
     redirect(getDefaultRouteForRole(session.user.role));
   }
 

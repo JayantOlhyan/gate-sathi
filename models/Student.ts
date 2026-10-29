@@ -2,6 +2,7 @@ import mongoose, { Schema, type Document, type Model, type Types } from 'mongoos
 
 export interface IStudent extends Document {
   schoolId: Types.ObjectId;
+  admissionNo: string;
   name: string;
   className: string;
   section: string;
@@ -18,6 +19,11 @@ const StudentSchema = new Schema<IStudent>(
       type: Schema.Types.ObjectId,
       ref: 'School',
       required: true,
+    },
+    admissionNo: {
+      type: String,
+      required: true,
+      trim: true,
     },
     name: {
       type: String,
@@ -52,7 +58,7 @@ const StudentSchema = new Schema<IStudent>(
   { timestamps: true }
 );
 
-StudentSchema.index({ schoolId: 1, className: 1, section: 1, rollNumber: 1 }, { unique: true });
+StudentSchema.index({ schoolId: 1, admissionNo: 1 }, { unique: true });
 StudentSchema.index({ schoolId: 1, name: 1 });
 
 export const Student: Model<IStudent> =

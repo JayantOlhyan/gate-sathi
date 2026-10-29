@@ -8,19 +8,18 @@ export type VisitPurpose =
   | 'maintenance'
   | 'other';
 
-export type VisitStatus = 'checked_in' | 'checked_out' | 'denied';
-
 export interface IVisit extends Document {
   schoolId: Types.ObjectId;
+  clientId: string;
   visitorId: Types.ObjectId;
-  studentId?: Types.ObjectId;
+  studentIds: Types.ObjectId[];
   purpose: VisitPurpose;
-  status: VisitStatus;
-  checkInAt: Date;
-  checkOutAt: Date | null;
+  entryAt: Date;
+  exitAt: Date | null;
   checkedInBy: Types.ObjectId;
   checkedOutBy?: Types.ObjectId;
   notes?: string;
+  readonly isInside: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,14 +31,23 @@ const VisitSchema = new Schema<IVisit>(
       ref: 'School',
       required: true,
     },
+    clientId: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     visitorId: {
       type: Schema.Types.ObjectId,
       ref: 'Visitor',
       required: true,
     },
-    studentId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Student',
+    studentIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: 'Student', required: true }],
+      required: true,
+      validate: {
+        validator: (arr: unknown[]) => Array.isArray(arr) && arr.length >= 1,
+        message: 'studentIds must contain at least 1 studentId',
+      },
     },
     purpose: {
       type: String,
@@ -53,17 +61,12 @@ const VisitSchema = new Schema<IVisit>(
       ],
       required: true,
     },
-    status: {
-      type: String,
-      enum: ['checked_in', 'checked_out', 'denied'],
-      default: 'checked_in',
-    },
-    checkInAt: {
+    entryAt: {
       type: Date,
       required: true,
       default: Date.now,
     },
-    checkOutAt: {
+    exitAt: {
       type: Date,
       default: null,
     },
@@ -81,13 +84,62 @@ const VisitSchema = new Schema<IVisit>(
       trim: true,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
 );
 
-VisitSchema.index({ schoolId: 1, checkInAt: -1 });
-VisitSchema.index({ schoolId: 1, status: 1, checkInAt: -1 });
-VisitSchema.index({ schoolId: 1, visitorId: 1, checkInAt: -1 });
-VisitSchema.index({ schoolId: 1, studentId: 1, checkInAt: -1 });
+VisitSchema.virtual('isInside').get(function (this: IVisit) {
+  return this.exitAt === null;
+});
+
+VisitSchema.index({ schoolId: 1, clientId: 1 }, { unique: true });
+VisitSchema.index({ schoolId: 1, entryAt: -1 });
+VisitSchema.index({ schoolId: 1, exitAt: 1 });
+VisitSchema.index({ schoolId: 1, studentIds: 1 });
+VisitSchema.index({ schoolId: 1, visitorId: 1, entryAt: -1 });
+
+export function isVisitInside(visit: Pick<IVisit, 'exitAt'>): boolean {
+  return visit.exitAt === null;
+}
+
+export class DuplicateVisitClientIdError extends Error {
+  code = 11000;
+  constructor(clientId: string) {
+    super(`Duplicate visit clientId "${clientId}" for school`);
+    this.name = 'DuplicateVisitClientIdError';
+  }
+}
+
+export async function recordVisit(input: {
+  schoolId: Types.ObjectId | string;
+  clientId: string;
+  visitorId: Types.ObjectId | string;
+  studentIds: Array<Types.ObjectId | string>;
+  purpose: VisitPurpose;
+  checkedInBy: Types.ObjectId | string;
+  entryAt?: Date;
+  exitAt?: Date | null;
+  notes?: string;
+}): Promise<IVisit> {
+  const doc = new Visit({
+    ...input,
+    exitAt: input.exitAt ?? null,
+  });
+  await doc.validate();
+
+  const existing = await Visit.findOne({
+    schoolId: input.schoolId,
+    clientId: input.clientId,
+  });
+  if (existing) {
+    throw new DuplicateVisitClientIdError(input.clientId);
+  }
+
+  return await Visit.create(input);
+}
 
 export const Visit: Model<IVisit> =
   mongoose.models.Visit || mongoose.model<IVisit>('Visit', VisitSchema);

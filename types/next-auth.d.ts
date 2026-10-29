@@ -8,6 +8,7 @@ declare module 'next-auth' {
     phone: string;
     role: Role;
     schoolIds: string[];
+    tokenVersion: number;
   }
 
   interface Session {
@@ -17,6 +18,7 @@ declare module 'next-auth' {
       phone: string;
       role: Role;
       schoolIds: string[];
+      tokenVersion: number;
     } & DefaultSession['user'];
   }
 }

@@ -12,9 +12,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         phone: { label: 'Phone', type: 'text' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         try {
-          return await authenticateWithPhoneAndPassword(credentials);
+          const forwardedFor = request?.headers?.get('x-forwarded-for');
+          const ip = forwardedFor?.split(',')[0]?.trim() || '127.0.0.1';
+          return await authenticateWithPhoneAndPassword(credentials, { ip });
         } catch {
           return null;
         }

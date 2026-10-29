@@ -21,7 +21,7 @@ export async function GET(
 
     await connectDB();
     const students = await Student.find({ schoolId, isActive: true })
-      .select('name className section rollNumber schoolId')
+      .select('admissionNo name className section rollNumber schoolId')
       .lean();
 
     return NextResponse.json({ schoolId, students }, { status: 200 });

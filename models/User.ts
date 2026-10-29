@@ -7,8 +7,7 @@ export interface IUser extends Document {
   passwordHash: string;
   role: Role;
   schoolIds: Types.ObjectId[];
-  failedLoginAttempts: number;
-  lockUntil: Date | null;
+  tokenVersion: number;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -39,13 +38,10 @@ const UserSchema = new Schema<IUser>(
       type: [{ type: Schema.Types.ObjectId, ref: 'School' }],
       default: [],
     },
-    failedLoginAttempts: {
+    tokenVersion: {
       type: Number,
       default: 0,
-    },
-    lockUntil: {
-      type: Date,
-      default: null,
+      required: true,
     },
     isActive: {
       type: Boolean,

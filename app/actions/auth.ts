@@ -1,9 +1,10 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { signIn, signOut } from '@/auth';
 import {
   authenticateWithPhoneAndPassword,
-  AuthLockoutError,
+  RateLimitError,
   getDefaultRouteForRole,
 } from '@/lib/auth-service';
 import { loginSchema } from '@/lib/validations';
@@ -23,8 +24,15 @@ export async function loginAction(rawInput: {
     return { ok: false, errorCode: 'validationError' };
   }
 
+  const headerStore = await headers();
+  const forwardedFor = headerStore.get('x-forwarded-for');
+  const ip =
+    forwardedFor?.split(',')[0]?.trim() ||
+    headerStore.get('x-real-ip')?.trim() ||
+    '127.0.0.1';
+
   try {
-    const user = await authenticateWithPhoneAndPassword(parsed.data);
+    const user = await authenticateWithPhoneAndPassword(parsed.data, { ip });
     if (!user) {
       return { ok: false, errorCode: 'invalidCredentials' };
     }
@@ -40,7 +48,7 @@ export async function loginAction(rawInput: {
       redirectTo: getDefaultRouteForRole(user.role),
     };
   } catch (error) {
-    if (error instanceof AuthLockoutError) {
+    if (error instanceof RateLimitError) {
       return { ok: false, errorCode: 'lockedAccount' };
     }
     return { ok: false, errorCode: 'invalidCredentials' };
