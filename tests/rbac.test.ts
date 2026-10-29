@@ -384,6 +384,73 @@ describe('GateSathi Phase 1 — RBAC, Models, Rate Limit & Session Revocation', 
     );
     expect(() => assertNotProduction('development')).not.toThrow();
   });
+
+  it('authenticates all three seeded roles (super_admin, principal, guard) and routes them properly', async () => {
+    const passwordHash = await bcrypt.hash('Password@123', 4);
+    const seededUsers = [
+      {
+        _id: 'admin-1',
+        name: 'State Super Admin',
+        phone: '9999999990',
+        passwordHash,
+        role: 'super_admin' as const,
+        schoolIds: [],
+        tokenVersion: 0,
+        isActive: true,
+      },
+      {
+        _id: 'principal-1',
+        name: 'Rajeshwari Mishra (Principal)',
+        phone: '9999999991',
+        passwordHash,
+        role: 'principal' as const,
+        schoolIds: ['pilot-school-id'],
+        tokenVersion: 0,
+        isActive: true,
+      },
+      {
+        _id: 'guard-1',
+        name: 'Ramesh Tiwari (Guard)',
+        phone: '9999999992',
+        passwordHash,
+        role: 'guard' as const,
+        schoolIds: ['pilot-school-id'],
+        tokenVersion: 0,
+        isActive: true,
+      },
+    ];
+
+    const findOneSpy = vi
+      .spyOn(User, 'findOne')
+      .mockImplementation(((query: { phone: string }) => {
+        const match = seededUsers.find((u) => u.phone === query.phone);
+        return Promise.resolve(match ?? null) as unknown as ReturnType<
+          typeof User.findOne
+        >;
+      }) as unknown as typeof User.findOne);
+
+    const adminAuth = await authenticateWithPhoneAndPassword(
+      { phone: '9999999990', password: 'Password@123' },
+      { ip: '10.0.0.1', skipDbConnect: true }
+    );
+    expect(adminAuth?.role).toBe('super_admin');
+
+    const principalAuth = await authenticateWithPhoneAndPassword(
+      { phone: '9999999991', password: 'Password@123' },
+      { ip: '10.0.0.2', skipDbConnect: true }
+    );
+    expect(principalAuth?.role).toBe('principal');
+    expect(principalAuth?.schoolIds).toEqual(['pilot-school-id']);
+
+    const guardAuth = await authenticateWithPhoneAndPassword(
+      { phone: '9999999992', password: 'Password@123' },
+      { ip: '10.0.0.3', skipDbConnect: true }
+    );
+    expect(guardAuth?.role).toBe('guard');
+    expect(guardAuth?.schoolIds).toEqual(['pilot-school-id']);
+
+    findOneSpy.mockRestore();
+  });
 });
 
 function findOneRestore(spy: { mockRestore: () => void }) {
