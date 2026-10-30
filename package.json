@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:local": "tsx scripts/dev-server.ts",
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
