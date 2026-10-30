@@ -5,7 +5,13 @@ const eslintConfig = [
   ...nextConfig,
   prettierConfig,
   {
-    ignores: ['.next/**', 'node_modules/**', 'dist/**', 'public/sw.js'],
+    ignores: [
+      '.next/**',
+      'node_modules/**',
+      'dist/**',
+      'public/sw.js',
+      'public/scrollcraft/**',
+    ],
   },
 ];
 

@@ -27,6 +27,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('next-intl/server', () => ({
+  getLocale: async () => 'hi',
   getTranslations: async () => (key: string) => key,
 }));
 

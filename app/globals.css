@@ -8,6 +8,17 @@
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;
+  --sc-canvas: #f8fafc;
+  --sc-surface: #ffffff;
+  --sc-ink: #0f172a;
+  --sc-ink-soft: #475569;
+  --sc-accent: #f59e0b;
+  --sc-accent-ink: #0f172a;
+  --sc-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
@@ -15,4 +26,107 @@ body {
   color: var(--foreground);
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Noto Sans Devanagari', sans-serif;
+}
+
+/* ============================================================================
+   ScrollCraft Scoped Device Mechanics (#gatesathi-story-root)
+   ========================================================================== */
+#gatesathi-story-root {
+  position: relative;
+  overflow-x: clip;
+}
+
+#gatesathi-story-root [data-sc-progress] {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 3px;
+  z-index: 60;
+  background: var(--sc-accent);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  will-change: transform;
+}
+
+#gatesathi-story-root .sc-act--pinned {
+  position: relative;
+}
+
+#gatesathi-story-root .sc-stage {
+  position: sticky;
+  top: 3.5rem;
+  min-height: calc(100svh - 3.5rem);
+  overflow: clip;
+  z-index: 1;
+}
+
+.sc-ready #gatesathi-story-root [data-sc-cue] {
+  will-change: opacity, transform;
+}
+
+#gatesathi-story-root [data-sc-pan] {
+  display: flex;
+  will-change: transform;
+}
+
+#gatesathi-story-root [data-sc-reveal] {
+  will-change: clip-path;
+}
+
+#gatesathi-story-root [data-sc-parallax] {
+  will-change: transform;
+}
+
+.sc-ready #gatesathi-story-root [data-sc-in],
+.sc-ready #gatesathi-story-root [data-sc-stagger] > * {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0);
+  transition: opacity 620ms var(--sc-ease-out),
+    transform 620ms var(--sc-ease-out);
+}
+
+.sc-ready #gatesathi-story-root [data-sc-in].sc-in,
+.sc-ready #gatesathi-story-root [data-sc-stagger] > .sc-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Bespoke Signature Move: Live Gate Verification Pass states */
+[data-gatesathi-pass] [data-pass-step] {
+  opacity: 0.45;
+  transform: scale(0.985);
+  transition: opacity 260ms var(--sc-ease-out),
+    transform 260ms var(--sc-ease-out),
+    border-color 260ms var(--sc-ease-out),
+    background-color 260ms var(--sc-ease-out);
+}
+
+[data-gatesathi-pass][data-pass-stage='1'] [data-pass-step='1'],
+[data-gatesathi-pass][data-pass-stage='2'] [data-pass-step='2'],
+[data-gatesathi-pass][data-pass-stage='3'] [data-pass-step='3'] {
+  opacity: 1;
+  transform: scale(1);
+  border-color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  #gatesathi-story-root [data-sc-in],
+  #gatesathi-story-root [data-sc-stagger] > * {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  #gatesathi-story-root [data-sc-parallax],
+  #gatesathi-story-root [data-sc-pan] {
+    transform: none !important;
+  }
+  #gatesathi-story-root [data-sc-reveal] {
+    clip-path: none !important;
+  }
+  #gatesathi-story-root [data-sc-act='pan'] .sc-stage {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
 }
