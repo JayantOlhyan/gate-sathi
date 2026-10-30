@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { AppHeader } from '@/components/app-header';
 import { connectDB } from '@/lib/db';
+import { isMockOtpActive } from '@/lib/otp';
 import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
 import { School } from '@/models/School';
 import { GateClient } from './gate-client';
@@ -33,11 +34,13 @@ export default async function GatePage() {
     redirect('/dashboard');
   }
 
+  const mockOtpActive = isMockOtpActive();
+
   return (
     <div className="flex flex-1 flex-col">
       <AppHeader showLogout />
       <main className="flex-1 p-4">
-        <GateClient schoolId={activeSchoolId} />
+        <GateClient schoolId={activeSchoolId} mockOtpActive={mockOtpActive} />
       </main>
     </div>
   );

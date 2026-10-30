@@ -4,6 +4,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  HeadBucketCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { RbacError } from '@/lib/rbac';
@@ -167,5 +168,24 @@ export async function verifyUploadedPhotoKey(params: {
       'Invalid photoKey: uploaded object size must be between 1 byte and 1 MB',
       400
     );
+  }
+}
+
+export async function checkR2Health(): Promise<'ok' | 'error'> {
+  const accountId = process.env.R2_ACCOUNT_ID?.trim();
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
+  const bucket = process.env.R2_BUCKET?.trim();
+
+  if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
+    return 'error';
+  }
+
+  try {
+    const client = getR2Client();
+    await client.send(new HeadBucketCommand({ Bucket: bucket }));
+    return 'ok';
+  } catch {
+    return 'error';
   }
 }

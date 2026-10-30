@@ -48,6 +48,7 @@ import { POST as createGateVisitRoute } from '@/app/api/gate/visits/route';
 import { GET as listInsideVisitsRoute } from '@/app/api/gate/visits/inside/route';
 import { POST as markVisitExitRoute } from '@/app/api/gate/visits/[visitId]/exit/route';
 import { POST as cronCloseVisitsRoute } from '@/app/api/cron/close-visits/route';
+import { GET as healthRoute } from '@/app/api/health/route';
 import closeVisitsScheduledHandler, {
   config as closeVisitsScheduleConfig,
 } from '@/netlify/functions/close-visits';
@@ -63,6 +64,7 @@ import { authConfig } from '@/auth.config';
 import { getRateLimiter, MongoRateLimiter } from '@/lib/rate-limit';
 import {
   assertOtpModeSafe,
+  isMockOtpActive,
   OTP_EXPIRY_MS,
   sendOtpForVisitor,
   verifyOtpForVisitor,
@@ -1072,15 +1074,29 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       },
     });
 
-    // 1. OTP_MODE=mock throws in production
-    expect(() => assertOtpModeSafe('production', 'mock')).toThrow(
+    // 1. OTP_MODE=mock throws without ALLOW_MOCK_OTP=true (especially in production), and is allowed only when OTP_MODE=mock AND ALLOW_MOCK_OTP=true
+    expect(() => assertOtpModeSafe('production', 'mock', undefined)).toThrow(
       /OTP_MODE=mock is forbidden/
     );
-    expect(() => assertOtpModeSafe('development', 'mock')).not.toThrow();
+    expect(() => assertOtpModeSafe('production', 'mock', 'false')).toThrow(
+      /OTP_MODE=mock is forbidden/
+    );
+    expect(() => assertOtpModeSafe('development', 'mock', undefined)).toThrow(
+      /requires ALLOW_MOCK_OTP=true/
+    );
+    expect(() =>
+      assertOtpModeSafe('production', 'mock', 'true')
+    ).not.toThrow();
+    expect(() =>
+      assertOtpModeSafe('development', 'mock', 'true')
+    ).not.toThrow();
+    expect(isMockOtpActive('mock', undefined)).toBe(false);
+    expect(isMockOtpActive('mock', 'true')).toBe(true);
 
     const phone = '9812345670';
     const t0 = Date.now();
     process.env.OTP_MODE = 'mock';
+    process.env.ALLOW_MOCK_OTP = 'true';
     let capturedCode = '';
     const captureProvider = {
       async sendOtp(_p: string, code: string) {
@@ -1096,6 +1112,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       provider: captureProvider,
       nodeEnv: 'development',
       otpMode: 'mock',
+      allowMockOtp: 'true',
     });
     await sendOtpForVisitor({
       schoolId: schoolA._id,
@@ -1104,6 +1121,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       provider: captureProvider,
       nodeEnv: 'development',
       otpMode: 'mock',
+      allowMockOtp: 'true',
     });
     await sendOtpForVisitor({
       schoolId: schoolA._id,
@@ -1112,6 +1130,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       provider: captureProvider,
       nodeEnv: 'development',
       otpMode: 'mock',
+      allowMockOtp: 'true',
     });
 
     await expect(
@@ -1122,6 +1141,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
         provider: captureProvider,
         nodeEnv: 'development',
         otpMode: 'mock',
+        allowMockOtp: 'true',
       })
     ).rejects.toMatchObject({ status: 429 });
 
@@ -1189,9 +1209,10 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       message: 'OTP has expired',
     });
 
-    // Verify route handler works for valid OTP in mock mode
+    // Verify route handler works for valid OTP in mock mode when ALLOW_MOCK_OTP=true
     const phoneValid = '9812345672';
     process.env.OTP_MODE = 'mock';
+    process.env.ALLOW_MOCK_OTP = 'true';
     await sendOtpRoute(
       new NextRequest('http://localhost:3000/api/gate/otp/send', {
         method: 'POST',
@@ -1214,6 +1235,18 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       })
     );
     expect(verifyOkRes.status).toBe(200);
+
+    // Also verify GET /api/health returns { db: 'ok', r2: 'error', otpMode: 'mock' } without secrets
+    const healthRes = await healthRoute(
+      new NextRequest('http://localhost:3000/api/health')
+    );
+    expect(healthRes.status).toBe(200);
+    const healthJson = await healthRes.json();
+    expect(healthJson).toEqual({
+      db: 'ok',
+      r2: 'error',
+      otpMode: 'mock',
+    });
   });
 
   it('computes isApproved server-side from GuardianLink, ignores client-sent isApproved, requires unapprovedReason, and handles idempotent clientId', async () => {

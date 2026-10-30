@@ -43,7 +43,13 @@ type GateStep =
   | 'entry'
   | 'confirmed';
 
-export function GateClient({ schoolId }: { schoolId: string }) {
+export function GateClient({
+  schoolId,
+  mockOtpActive = false,
+}: {
+  schoolId: string;
+  mockOtpActive?: boolean;
+}) {
   const t = useTranslations('gate');
   const tGuardian = useTranslations('guardians');
 
@@ -391,6 +397,15 @@ export function GateClient({ schoolId }: { schoolId: string }) {
 
   return (
     <div className="space-y-4">
+      {mockOtpActive && (
+        <div
+          role="status"
+          className="rounded-md border-2 border-amber-400 bg-amber-200 px-3 py-2 text-center text-xs font-extrabold tracking-wide text-amber-950 shadow-sm"
+        >
+          TEST MODE — OTP 000000
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <span className="inline-block rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
           {t('badge')}

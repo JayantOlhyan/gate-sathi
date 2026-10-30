@@ -22,7 +22,9 @@ export interface OtpProvider {
 
 export class MockOtpProvider implements OtpProvider {
   async sendOtp(phone: string, code: string): Promise<void> {
-    console.info(`[MockOtpProvider] OTP for ${phone}: ${code} (or 000000 in mock mode)`);
+    console.info(
+      `[MockOtpProvider] OTP for ${phone}: ${code} (or 000000 in mock mode)`
+    );
   }
 }
 
@@ -40,7 +42,9 @@ export class Msg91OtpProvider implements OtpProvider {
 
   async sendOtp(phone: string, code: string): Promise<void> {
     if (!this.authKey || !this.templateId) {
-      throw new Error('MSG91_AUTH_KEY and MSG91_TEMPLATE_ID are required for Msg91OtpProvider');
+      throw new Error(
+        'MSG91_AUTH_KEY and MSG91_TEMPLATE_ID are required for Msg91OtpProvider'
+      );
     }
     const response = await fetch('https://control.msg91.com/api/v5/otp', {
       method: 'POST',
@@ -60,24 +64,48 @@ export class Msg91OtpProvider implements OtpProvider {
   }
 }
 
+export function isMockOtpActive(
+  otpMode: string | undefined = process.env.OTP_MODE,
+  allowMockOtp: string | undefined = process.env.ALLOW_MOCK_OTP
+): boolean {
+  return otpMode === 'mock' && allowMockOtp === 'true';
+}
+
 export function assertOtpModeSafe(
   nodeEnv: string | undefined = process.env.NODE_ENV,
-  otpMode: string | undefined = process.env.OTP_MODE
+  otpMode: string | undefined = process.env.OTP_MODE,
+  allowMockOtp: string | undefined = process.env.ALLOW_MOCK_OTP
 ): void {
-  if (nodeEnv === 'production' && otpMode === 'mock') {
-    throw new Error('OTP_MODE=mock is forbidden when NODE_ENV=production');
+  if (otpMode === 'mock' && allowMockOtp !== 'true') {
+    if (nodeEnv === 'production') {
+      throw new Error(
+        'OTP_MODE=mock is forbidden when NODE_ENV=production without ALLOW_MOCK_OTP=true'
+      );
+    }
+    throw new Error(
+      'OTP_MODE=mock requires ALLOW_MOCK_OTP=true to enable MockOtpProvider'
+    );
   }
 }
 
-// Validate at module startup
-assertOtpModeSafe();
+// Validate at module startup if running in production with OTP_MODE=mock and without ALLOW_MOCK_OTP=true
+if (
+  process.env.NODE_ENV === 'production' &&
+  process.env.OTP_MODE === 'mock' &&
+  process.env.ALLOW_MOCK_OTP !== 'true'
+) {
+  throw new Error(
+    'OTP_MODE=mock is forbidden when NODE_ENV=production without ALLOW_MOCK_OTP=true'
+  );
+}
 
 export function getOtpProvider(
   nodeEnv: string | undefined = process.env.NODE_ENV,
-  otpMode: string | undefined = process.env.OTP_MODE
+  otpMode: string | undefined = process.env.OTP_MODE,
+  allowMockOtp: string | undefined = process.env.ALLOW_MOCK_OTP
 ): OtpProvider {
-  assertOtpModeSafe(nodeEnv, otpMode);
-  if (otpMode === 'mock') {
+  assertOtpModeSafe(nodeEnv, otpMode, allowMockOtp);
+  if (isMockOtpActive(otpMode, allowMockOtp)) {
     return new MockOtpProvider();
   }
   return new Msg91OtpProvider();
@@ -92,7 +120,10 @@ export function hashOtpCode(code: string, salt?: string): string {
   return `${actualSalt}:${digest}`;
 }
 
-export function verifyHashedOtpCode(code: string, storedCodeHash: string): boolean {
+export function verifyHashedOtpCode(
+  code: string,
+  storedCodeHash: string
+): boolean {
   const [salt, expectedDigest] = storedCodeHash.split(':');
   if (!salt || !expectedDigest) {
     return false;
@@ -119,12 +150,13 @@ export async function sendOtpForVisitor(params: {
   provider?: OtpProvider;
   nodeEnv?: string;
   otpMode?: string;
+  allowMockOtp?: string;
 }): Promise<{ expiresAt: Date }> {
   const nowMs = params.nowMs ?? Date.now();
   const schoolObjectId = new Types.ObjectId(String(params.schoolId));
   const phone = params.phone.trim();
 
-  assertOtpModeSafe(params.nodeEnv, params.otpMode);
+  assertOtpModeSafe(params.nodeEnv, params.otpMode, params.allowMockOtp);
 
   // Max 3 sends per phone per hour
   const oneHourAgo = new Date(nowMs - OTP_HOURLY_WINDOW_MS);
@@ -162,7 +194,8 @@ export async function sendOtpForVisitor(params: {
   });
 
   const provider =
-    params.provider ?? getOtpProvider(params.nodeEnv, params.otpMode);
+    params.provider ??
+    getOtpProvider(params.nodeEnv, params.otpMode, params.allowMockOtp);
   await provider.sendOtp(phone, code);
 
   return { expiresAt };
@@ -175,12 +208,14 @@ export async function verifyOtpForVisitor(params: {
   nowMs?: number;
   nodeEnv?: string;
   otpMode?: string;
+  allowMockOtp?: string;
 }): Promise<{ verified: true; verifiedAt: Date }> {
   const nowMs = params.nowMs ?? Date.now();
   const nodeEnv = params.nodeEnv ?? process.env.NODE_ENV;
   const otpMode = params.otpMode ?? process.env.OTP_MODE;
+  const allowMockOtp = params.allowMockOtp ?? process.env.ALLOW_MOCK_OTP;
 
-  assertOtpModeSafe(nodeEnv, otpMode);
+  assertOtpModeSafe(nodeEnv, otpMode, allowMockOtp);
 
   const schoolObjectId = new Types.ObjectId(String(params.schoolId));
   const phone = params.phone.trim();
@@ -209,7 +244,7 @@ export async function verifyOtpForVisitor(params: {
   }
 
   const isMockAccept =
-    otpMode === 'mock' && nodeEnv !== 'production' && code === '000000';
+    isMockOtpActive(otpMode, allowMockOtp) && code === '000000';
   const isCodeValid =
     isMockAccept || verifyHashedOtpCode(code, otpReq.codeHash);
 
