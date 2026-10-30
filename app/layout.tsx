@@ -40,9 +40,7 @@ export default async function RootLayout({
     <html lang={locale}>
       <body className="min-h-dvh bg-slate-100 text-slate-900 antialiased">
         <NextIntlClientProvider locale={locale} messages={messages}>
-          <div className="mx-auto flex min-h-dvh w-full max-w-[360px] flex-col bg-slate-50 shadow-sm">
-            {children}
-          </div>
+          {children}
         </NextIntlClientProvider>
       </body>
     </html>

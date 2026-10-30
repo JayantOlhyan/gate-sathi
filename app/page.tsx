@@ -1,16 +1,23 @@
-import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
-import { getDefaultRouteForRole } from '@/lib/auth-service';
+import {
+  LandingClient,
+  type LandingSessionUser,
+} from '@/components/landing-client';
 
 export default async function HomePage() {
-  let session = null;
+  let sessionUser: LandingSessionUser | null = null;
   try {
-    session = await auth();
+    const session = await auth();
+    if (session?.user?.id && session.user.role) {
+      sessionUser = {
+        id: session.user.id,
+        phone: session.user.phone,
+        role: session.user.role,
+      };
+    }
   } catch {
-    session = null;
+    sessionUser = null;
   }
-  if (!session?.user?.id || !session.user.role) {
-    redirect('/login');
-  }
-  redirect(getDefaultRouteForRole(session.user.role));
+
+  return <LandingClient sessionUser={sessionUser} />;
 }
