@@ -13,12 +13,16 @@ export default async function StudentsPage() {
     let targetSchoolId = user.schoolIds[0];
 
     if (!targetSchoolId && user.role === 'super_admin') {
-      await connectDB();
-      const firstSchool = await School.findOne({ isActive: true })
-        .select('_id')
-        .lean();
-      if (firstSchool?._id) {
-        targetSchoolId = String(firstSchool._id);
+      if (process.env.MONGODB_URI) {
+        await connectDB();
+        const firstSchool = await School.findOne({ isActive: true })
+          .select('_id')
+          .lean();
+        if (firstSchool?._id) {
+          targetSchoolId = String(firstSchool._id);
+        }
+      } else {
+        targetSchoolId = '6ae4b61d181c9c0a1f841a3e';
       }
     }
 

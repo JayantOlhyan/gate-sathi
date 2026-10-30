@@ -163,13 +163,16 @@ export class RateLimitError extends Error {
   }
 }
 
-// Switch login limits to MongoRateLimiter; in-memory stays only for tests
+// Switch login limits to MongoRateLimiter; in-memory fallback for tests or preview without MONGODB_URI
 let activeRateLimiter: RateLimiter =
-  process.env.NODE_ENV === 'test'
+  process.env.NODE_ENV === 'test' || !process.env.MONGODB_URI
     ? new InMemoryRateLimiter()
     : new MongoRateLimiter();
 
 export function getRateLimiter(): RateLimiter {
+  if (!process.env.MONGODB_URI && !(activeRateLimiter instanceof InMemoryRateLimiter)) {
+    return new InMemoryRateLimiter();
+  }
   return activeRateLimiter;
 }
 

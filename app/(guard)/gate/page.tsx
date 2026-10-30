@@ -15,12 +15,16 @@ export default async function GatePage() {
     let primarySchoolId = user.schoolIds[0];
 
     if (!primarySchoolId && user.role === 'super_admin') {
-      await connectDB();
-      const firstSchool = await School.findOne({ isActive: true })
-        .select('_id')
-        .lean();
-      if (firstSchool?._id) {
-        primarySchoolId = String(firstSchool._id);
+      if (process.env.MONGODB_URI) {
+        await connectDB();
+        const firstSchool = await School.findOne({ isActive: true })
+          .select('_id')
+          .lean();
+        if (firstSchool?._id) {
+          primarySchoolId = String(firstSchool._id);
+        }
+      } else {
+        primarySchoolId = '6ae4b61d181c9c0a1f841a3e';
       }
     }
 
