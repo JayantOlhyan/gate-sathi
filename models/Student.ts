@@ -6,7 +6,7 @@ export interface IStudent extends Document {
   name: string;
   className: string;
   section: string;
-  rollNumber: string;
+  rollNumber?: string;
   guardianPhone?: string;
   isActive: boolean;
   createdAt: Date;
@@ -43,7 +43,7 @@ const StudentSchema = new Schema<IStudent>(
     },
     rollNumber: {
       type: String,
-      required: true,
+      default: '',
       trim: true,
     },
     guardianPhone: {
@@ -60,6 +60,7 @@ const StudentSchema = new Schema<IStudent>(
 
 StudentSchema.index({ schoolId: 1, admissionNo: 1 }, { unique: true });
 StudentSchema.index({ schoolId: 1, name: 1 });
+StudentSchema.index({ schoolId: 1, className: 1, section: 1 });
 
 export const Student: Model<IStudent> =
   mongoose.models.Student || mongoose.model<IStudent>('Student', StudentSchema);

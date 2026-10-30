@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GUARDIAN_RELATIONS } from '@/models/GuardianLink';
 
 export const ROLES = ['super_admin', 'principal', 'guard'] as const;
 export type Role = (typeof ROLES)[number];
@@ -23,12 +24,69 @@ export const objectIdSchema = z
 export const studentInputSchema = z.object({
   schoolId: z.string().trim().min(1),
   admissionNo: z.string().trim().min(1, 'admissionNo is required'),
-  name: z.string().trim().min(1),
-  className: z.string().trim().min(1),
-  section: z.string().trim().min(1).default('A'),
-  rollNumber: z.string().trim().min(1),
+  name: z.string().trim().min(1, 'name is required'),
+  className: z.string().trim().min(1, 'className is required'),
+  section: z.string().trim().min(1, 'section is required').default('A'),
+  rollNumber: z.string().trim().optional().default(''),
   guardianPhone: indianPhoneSchema.optional(),
   isActive: z.boolean().default(true),
+});
+
+export const studentCreateBodySchema = z.object({
+  admissionNo: z.string().trim().min(1, 'Admission number is required'),
+  name: z.string().trim().min(1, 'Student name is required'),
+  className: z.string().trim().min(1, 'Class is required'),
+  section: z.string().trim().min(1, 'Section is required'),
+  rollNumber: z.string().trim().optional().default(''),
+});
+
+export const studentUpdateBodySchema = z
+  .object({
+    admissionNo: z.string().trim().min(1).optional(),
+    name: z.string().trim().min(1).optional(),
+    className: z.string().trim().min(1).optional(),
+    section: z.string().trim().min(1).optional(),
+    rollNumber: z.string().trim().optional(),
+    isActive: z.boolean().optional(),
+  })
+  .refine((obj) => Object.keys(obj).length > 0, {
+    message: 'At least one field must be provided for update',
+  });
+
+export const studentListQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  className: z.string().trim().optional(),
+  section: z.string().trim().optional(),
+  includeInactive: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export const columnMappingSchema = z.object({
+  admissionNo: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  className: z.string().trim().min(1),
+  section: z.string().trim().min(1),
+  rollNumber: z.string().trim().optional(),
+});
+
+export type ColumnMapping = z.infer<typeof columnMappingSchema>;
+
+export const studentImportRowSchema = z.object({
+  admissionNo: z.string().trim().min(1, 'Missing admissionNo'),
+  name: z.string().trim().min(1, 'Missing student name'),
+  className: z.string().trim().min(1, 'Missing className'),
+  section: z.string().trim().min(1, 'Missing section'),
+  rollNumber: z.string().trim().optional().default(''),
+});
+
+export const guardianAddBodySchema = z.object({
+  phone: indianPhoneSchema,
+  name: z.string().trim().min(1, 'Guardian name is required'),
+  relation: z.enum(GUARDIAN_RELATIONS),
 });
 
 export const visitPurposes = [

@@ -105,14 +105,6 @@ export function isVisitInside(visit: Pick<IVisit, 'exitAt'>): boolean {
   return visit.exitAt === null;
 }
 
-export class DuplicateVisitClientIdError extends Error {
-  code = 11000;
-  constructor(clientId: string) {
-    super(`Duplicate visit clientId "${clientId}" for school`);
-    this.name = 'DuplicateVisitClientIdError';
-  }
-}
-
 export async function recordVisit(input: {
   schoolId: Types.ObjectId | string;
   clientId: string;
@@ -124,21 +116,10 @@ export async function recordVisit(input: {
   exitAt?: Date | null;
   notes?: string;
 }): Promise<IVisit> {
-  const doc = new Visit({
+  return await Visit.create({
     ...input,
     exitAt: input.exitAt ?? null,
   });
-  await doc.validate();
-
-  const existing = await Visit.findOne({
-    schoolId: input.schoolId,
-    clientId: input.clientId,
-  });
-  if (existing) {
-    throw new DuplicateVisitClientIdError(input.clientId);
-  }
-
-  return await Visit.create(input);
 }
 
 export const Visit: Model<IVisit> =

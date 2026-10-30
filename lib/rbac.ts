@@ -81,5 +81,27 @@ export function handleApiError(error: unknown): NextResponse {
       { status: 400 }
     );
   }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: string }).name === 'ImportValidationError'
+  ) {
+    return NextResponse.json(
+      { error: (error as unknown as Error).message },
+      { status: 400 }
+    );
+  }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: number }).code === 11000
+  ) {
+    return NextResponse.json(
+      { error: 'Duplicate resource violates unique constraint' },
+      { status: 409 }
+    );
+  }
   return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
 }

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { AppHeader } from '@/components/app-header';
@@ -35,13 +36,19 @@ export default async function DashboardPage() {
             </span>
             <CardTitle className="pt-1">{t('title')}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm text-slate-600">
+          <CardContent className="space-y-4 text-sm text-slate-600">
             <p>{t('placeholder')}</p>
             {activeSchoolId && (
               <p className="rounded bg-slate-100 p-2 font-mono text-xs text-slate-700">
                 {t('assignedSchool')}: {activeSchoolId}
               </p>
             )}
+            <Link
+              href="/students"
+              className="inline-flex h-11 w-full items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-slate-50 shadow hover:bg-slate-900/90"
+            >
+              {t('manageStudents')}
+            </Link>
           </CardContent>
         </Card>
       </main>

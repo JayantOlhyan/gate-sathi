@@ -1,13 +1,25 @@
 import mongoose, { Schema, type Document, type Model, type Types } from 'mongoose';
 
-export type GuardianRelationship = 'father' | 'mother' | 'guardian' | 'relative' | 'other';
+export const GUARDIAN_RELATIONS = [
+  'Father',
+  'Mother',
+  'Grandparent',
+  'Sibling',
+  'Uncle',
+  'Aunt',
+  'Other',
+] as const;
+
+export type GuardianRelation = (typeof GUARDIAN_RELATIONS)[number];
 
 export interface IGuardianLink extends Document {
   schoolId: Types.ObjectId;
   studentId: Types.ObjectId;
   visitorId: Types.ObjectId;
-  relationship: GuardianRelationship;
-  isApproved: boolean;
+  relation: GuardianRelation;
+  approved: boolean;
+  approvedBy: Types.ObjectId;
+  approvedAt: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,14 +41,25 @@ const GuardianLinkSchema = new Schema<IGuardianLink>(
       ref: 'Visitor',
       required: true,
     },
-    relationship: {
+    relation: {
       type: String,
-      enum: ['father', 'mother', 'guardian', 'relative', 'other'],
+      enum: GUARDIAN_RELATIONS,
       required: true,
     },
-    isApproved: {
+    approved: {
       type: Boolean,
       default: true,
+      required: true,
+    },
+    approvedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    approvedAt: {
+      type: Date,
+      default: Date.now,
+      required: true,
     },
   },
   { timestamps: true }
@@ -44,6 +67,7 @@ const GuardianLinkSchema = new Schema<IGuardianLink>(
 
 GuardianLinkSchema.index({ schoolId: 1, studentId: 1, visitorId: 1 }, { unique: true });
 GuardianLinkSchema.index({ schoolId: 1, visitorId: 1 });
+GuardianLinkSchema.index({ schoolId: 1, studentId: 1, approved: 1 });
 
 export const GuardianLink: Model<IGuardianLink> =
   mongoose.models.GuardianLink ||
