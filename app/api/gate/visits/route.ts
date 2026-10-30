@@ -3,11 +3,12 @@ import { Types } from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { writeAuditLog } from '@/lib/audit';
 import { handleApiError, requireRole, requireSchoolAccess, RbacError } from '@/lib/rbac';
+import { verifyUploadedPhotoKey } from '@/lib/r2';
 import { gateCreateVisitBodySchema } from '@/lib/validations';
 import { Student } from '@/models/Student';
 import { Visitor } from '@/models/Visitor';
 import { GuardianLink } from '@/models/GuardianLink';
-import { Visit } from '@/models/Visit';
+import { Visit, UNAPPROVED_REASON_CODES } from '@/models/Visit';
 
 export async function POST(req: NextRequest) {
   try {
@@ -35,12 +36,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Validate photoKey prefix if present
-    if (body.photoKey && !body.photoKey.startsWith(`${schoolId}/visitors/`)) {
-      throw new RbacError(
-        'Forbidden: photoKey does not belong to the authorized school',
-        403
-      );
+    // 2. Validate photoKey via HeadObject (must start with `${schoolId}/`, exist, and be <= 1 MB)
+    if (body.photoKey) {
+      await verifyUploadedPhotoKey({
+        schoolId,
+        photoKey: body.photoKey,
+      });
     }
 
     // 3. Ensure EVERY selected student belongs to schoolId and is active
@@ -110,16 +111,32 @@ export async function POST(req: NextRequest) {
     );
 
     if (!isApproved) {
-      const reason = body.unapprovedReason?.trim() ?? '';
-      if (reason.length < 5) {
+      if (
+        !body.reasonCode ||
+        !UNAPPROVED_REASON_CODES.includes(body.reasonCode)
+      ) {
         return NextResponse.json(
           {
             error:
-              'Unapproved visit requires unapprovedReason of at least 5 characters',
+              'Unapproved visit requires reasonCode (Relative, Neighbour, Driver/auto, or Other)',
             isApproved: false,
           },
           { status: 400 }
         );
+      }
+
+      if (body.reasonCode === 'Other') {
+        const text = body.reasonText?.trim() ?? '';
+        if (text.length < 5) {
+          return NextResponse.json(
+            {
+              error:
+                'Unapproved visit with reasonCode "Other" requires reasonText of at least 5 characters',
+              isApproved: false,
+            },
+            { status: 400 }
+          );
+        }
       }
     }
 
@@ -143,9 +160,8 @@ export async function POST(req: NextRequest) {
         purpose: body.purpose,
         purposeNote: body.purposeNote?.trim(),
         isApproved,
-        unapprovedReason: isApproved
-          ? undefined
-          : body.unapprovedReason?.trim(),
+        reasonCode: isApproved ? undefined : body.reasonCode,
+        reasonText: isApproved ? undefined : body.reasonText?.trim(),
         entryAt: new Date(),
         exitAt: null,
         autoClosed: false,
@@ -164,7 +180,8 @@ export async function POST(req: NextRequest) {
           studentIds: uniqueStudentIds,
           purpose: createdVisit.purpose,
           isApproved,
-          unapprovedReason: createdVisit.unapprovedReason ?? null,
+          reasonCode: createdVisit.reasonCode ?? null,
+          reasonText: createdVisit.reasonText ?? null,
         },
       });
 

@@ -11,8 +11,10 @@ export {
 export {
   Visit,
   VISIT_PURPOSES,
+  UNAPPROVED_REASON_CODES,
   type IVisit,
   type VisitPurpose,
+  type UnapprovedReasonCode,
   isVisitInside,
   recordVisit,
 } from './Visit';

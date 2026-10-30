@@ -3,6 +3,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { RbacError } from '@/lib/rbac';
@@ -68,6 +69,7 @@ export async function createPresignedPutUrl(params: {
 
   const uploadUrl = await getSignedUrl(client, command, {
     expiresIn: SIGNED_PUT_EXPIRY_SECONDS,
+    signableHeaders: new Set(['content-type', 'content-length']),
   });
 
   return { uploadUrl, photoKey };
@@ -77,7 +79,7 @@ export async function createPresignedGetUrl(params: {
   schoolId: string;
   photoKey: string;
 }): Promise<string> {
-  const expectedPrefix = `${params.schoolId}/visitors/`;
+  const expectedPrefix = `${params.schoolId}/`;
   if (!params.photoKey.startsWith(expectedPrefix)) {
     throw new RbacError(
       'Forbidden: photoKey does not belong to the authorized school',
@@ -94,4 +96,76 @@ export async function createPresignedGetUrl(params: {
   return await getSignedUrl(client, command, {
     expiresIn: SIGNED_GET_EXPIRY_SECONDS,
   });
+}
+
+export interface HeadObjectMetadata {
+  exists: boolean;
+  contentLength?: number;
+  contentType?: string;
+}
+
+export type HeadObjectInspector = (
+  key: string
+) => Promise<HeadObjectMetadata>;
+
+let customHeadObjectInspector: HeadObjectInspector | null = null;
+
+export function setHeadObjectInspector(
+  inspector: HeadObjectInspector | null
+): void {
+  customHeadObjectInspector = inspector;
+}
+
+export async function headPhotoObject(
+  photoKey: string
+): Promise<HeadObjectMetadata> {
+  if (customHeadObjectInspector) {
+    return await customHeadObjectInspector(photoKey);
+  }
+
+  try {
+    const client = getR2Client();
+    const res = await client.send(
+      new HeadObjectCommand({
+        Bucket: getR2BucketName(),
+        Key: photoKey,
+      })
+    );
+    return {
+      exists: true,
+      contentLength: res.ContentLength,
+      contentType: res.ContentType,
+    };
+  } catch {
+    return { exists: false };
+  }
+}
+
+export async function verifyUploadedPhotoKey(params: {
+  schoolId: string;
+  photoKey: string;
+}): Promise<void> {
+  const expectedPrefix = `${params.schoolId}/`;
+  if (!params.photoKey.startsWith(expectedPrefix)) {
+    throw new RbacError(
+      'Invalid photoKey: must start with the authorized schoolId prefix',
+      400
+    );
+  }
+
+  const meta = await headPhotoObject(params.photoKey);
+  if (!meta.exists) {
+    throw new RbacError(
+      'Invalid photoKey: uploaded object does not exist in storage',
+      400
+    );
+  }
+
+  const size = meta.contentLength ?? 0;
+  if (size <= 0 || size > MAX_UPLOAD_BYTES) {
+    throw new RbacError(
+      'Invalid photoKey: uploaded object size must be between 1 byte and 1 MB',
+      400
+    );
+  }
 }

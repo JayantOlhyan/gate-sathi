@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { GUARDIAN_RELATIONS } from '@/models/GuardianLink';
+import { UNAPPROVED_REASON_CODES } from '@/models/Visit';
 
 export const ROLES = ['super_admin', 'principal', 'guard'] as const;
 export type Role = (typeof ROLES)[number];
@@ -71,6 +72,13 @@ export const columnMappingSchema = z.object({
   className: z.string().trim().min(1),
   section: z.string().trim().min(1),
   rollNumber: z.string().trim().optional(),
+  fatherName: z.string().trim().optional(),
+  fatherPhone: z.string().trim().optional(),
+  motherName: z.string().trim().optional(),
+  motherPhone: z.string().trim().optional(),
+  guardianName: z.string().trim().optional(),
+  guardianPhone: z.string().trim().optional(),
+  guardianRelation: z.string().trim().optional(),
 });
 
 export type ColumnMapping = z.infer<typeof columnMappingSchema>;
@@ -162,7 +170,7 @@ export const gateCreateVisitBodySchema = z.object({
   phone: indianPhoneSchema,
   name: z.string().trim().min(1, 'Visitor name is required'),
   relation: z.enum(GUARDIAN_RELATIONS).optional(),
-  photoKey: z.string().trim().min(1).optional(),
+  photoKey: z.string().trim().optional(),
   consentAt: z.coerce.date().optional(),
   consentVersion: z.string().trim().min(1).optional(),
   studentIds: z
@@ -170,7 +178,8 @@ export const gateCreateVisitBodySchema = z.object({
     .min(1, 'At least one student must be selected'),
   purpose: z.enum(gatePurposes),
   purposeNote: z.string().trim().optional(),
-  unapprovedReason: z.string().trim().optional(),
+  reasonCode: z.enum(UNAPPROVED_REASON_CODES).optional(),
+  reasonText: z.string().trim().optional(),
 });
 
 export const gateExitVisitBodySchema = z.object({

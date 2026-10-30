@@ -48,6 +48,10 @@ import { POST as createGateVisitRoute } from '@/app/api/gate/visits/route';
 import { GET as listInsideVisitsRoute } from '@/app/api/gate/visits/inside/route';
 import { POST as markVisitExitRoute } from '@/app/api/gate/visits/[visitId]/exit/route';
 import { POST as cronCloseVisitsRoute } from '@/app/api/cron/close-visits/route';
+import closeVisitsScheduledHandler, {
+  config as closeVisitsScheduleConfig,
+} from '@/netlify/functions/close-visits';
+import { setHeadObjectInspector } from '@/lib/r2';
 import {
   authenticateWithPhoneAndPassword,
   RateLimitError,
@@ -107,6 +111,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    setHeadObjectInspector(null);
     await getRateLimiter().clearAll();
     await Promise.all([
       School.deleteMany({}),
@@ -1316,7 +1321,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     expect(await Visit.countDocuments({ schoolId: schoolA._id })).toBe(1);
 
     // 2. Unlinked student (or mix of linked + unlinked) -> server computes isApproved = false,
-    // ignores client-sent isApproved: true, and blocks save without unapprovedReason (min 5 chars)
+    // ignores client-sent isApproved: true, and blocks save without reasonCode
     const blockedRes = await createGateVisitRoute(
       new NextRequest('http://localhost:3000/api/gate/visits', {
         method: 'POST',
@@ -1336,7 +1341,27 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     const blockedBody = await blockedRes.json();
     expect(blockedBody.isApproved).toBe(false);
 
-    // Succeeds when unapprovedReason (>= 5 chars) is provided, and stores isApproved: false
+    // Selecting reasonCode = 'Other' without reasonText >= 5 chars also returns 400
+    const otherShortRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-uuid-unlinked-other-short',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          studentIds: [String(studentLinked._id), String(studentUnlinked._id)],
+          purpose: 'Meet student',
+          reasonCode: 'Other',
+          reasonText: 'abc',
+          isApproved: true,
+        }),
+      })
+    );
+    expect(otherShortRes.status).toBe(400);
+
+    // Succeeds when reasonCode = 'Other' with reasonText >= 5 chars is provided, and stores reasonCode + reasonText
     const unapprovedOkRes = await createGateVisitRoute(
       new NextRequest('http://localhost:3000/api/gate/visits', {
         method: 'POST',
@@ -1348,7 +1373,8 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
           name: 'Rakesh Kumar',
           studentIds: [String(studentLinked._id), String(studentUnlinked._id)],
           purpose: 'Meet student',
-          unapprovedReason: 'Confirmed with class teacher over phone',
+          reasonCode: 'Other',
+          reasonText: 'Confirmed with class teacher over phone',
           isApproved: true, // Spoofed true is still ignored!
         }),
       })
@@ -1356,9 +1382,31 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     expect(unapprovedOkRes.status).toBe(201);
     const unapprovedOkData = await unapprovedOkRes.json();
     expect(unapprovedOkData.visit.isApproved).toBe(false);
-    expect(unapprovedOkData.visit.unapprovedReason).toBe(
+    expect(unapprovedOkData.visit.reasonCode).toBe('Other');
+    expect(unapprovedOkData.visit.reasonText).toBe(
       'Confirmed with class teacher over phone'
     );
+
+    // Chip reasonCode = 'Relative' (non-Other) succeeds without reasonText
+    const chipRelativeRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-uuid-unlinked-relative',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          studentIds: [String(studentUnlinked._id)],
+          purpose: 'Meet student',
+          reasonCode: 'Relative',
+        }),
+      })
+    );
+    expect(chipRelativeRes.status).toBe(201);
+    const chipRelativeData = await chipRelativeRes.json();
+    expect(chipRelativeData.visit.isApproved).toBe(false);
+    expect(chipRelativeData.visit.reasonCode).toBe('Relative');
 
     // 3. Guard of School A cannot create a visit for a School B student or sign an upload for School B
     const crossVisitRes = await createGateVisitRoute(
@@ -1372,7 +1420,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
           name: 'Rakesh Kumar',
           studentIds: [String(studentInSchoolB._id)],
           purpose: 'Pickup',
-          unapprovedReason: 'Trying cross school student',
+          reasonCode: 'Relative',
         }),
       })
     );
@@ -1536,5 +1584,239 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     expect(r1.allowed).toBe(true);
     expect(r2.allowed).toBe(true);
     expect(r3.allowed).toBe(false);
+  });
+
+  it('bulk imports students with guardian columns (including siblings sharing a parent phone and conflict counting without overwriting)', async () => {
+    const { schoolA, principalAId } = await seedTwoSchools();
+
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(principalAId),
+        name: 'Principal A',
+        phone: '9999999991',
+        role: 'principal',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+
+    // Sibling 1 and Sibling 2 share fatherPhone (9876543210, same name "Rakesh Kumar")
+    // and motherPhone (9876543211, but Sibling 2 has a conflicting name "Suman Devi" vs "Sunita Devi").
+    // Sibling 2 also has an Uncle guardian (9876543212).
+    const csvWithGuardians = [
+      'admissionNo,name,className,section,rollNumber,fatherName,fatherPhone,motherName,motherPhone,guardianName,guardianPhone,guardianRelation',
+      'ADM-G1,Aarav Kumar,5,A,1,Rakesh Kumar,9876543210,Sunita Devi,9876543211,,,',
+      'ADM-G2,Ananya Kumar,7,B,2,Rakesh Kumar,9876543210,Suman Devi,9876543211,Manoj Kumar,9876543212,Uncle',
+    ].join('\n');
+
+    const fd = new FormData();
+    fd.append(
+      'file',
+      new File([csvWithGuardians], 'siblings-guardians.csv', {
+        type: 'text/csv',
+      })
+    );
+    fd.append('mode', 'commit');
+
+    const res = await importStudentsRoute(
+      new NextRequest(
+        `http://localhost:3000/api/schools/${String(schoolA._id)}/students/import`,
+        {
+          method: 'POST',
+          body: fd,
+        }
+      ),
+      { params: Promise.resolve({ schoolId: String(schoolA._id) }) }
+    );
+    expect(res.status).toBe(200);
+    const report = await res.json();
+
+    expect(report.created).toBe(2);
+    expect(report.failed).toBe(0);
+    // 3 unique visitors created: Father (9876543210), Mother (9876543211), Uncle (9876543212)
+    expect(report.guardiansCreated).toBe(3);
+    // 5 guardian links created: Row 1 has 2 (Father, Mother), Row 2 has 3 (Father, Mother, Uncle)
+    expect(report.guardiansLinked).toBe(5);
+    // 1 conflict on Row 2 motherPhone (Sunita Devi vs Suman Devi)
+    expect(report.guardianConflicts).toBe(1);
+
+    expect(report.rows[0]).toMatchObject({
+      admissionNo: 'ADM-G1',
+      status: 'created',
+      guardiansCreated: 2,
+      guardiansLinked: 2,
+      guardianConflicts: 0,
+    });
+    expect(report.rows[1]).toMatchObject({
+      admissionNo: 'ADM-G2',
+      status: 'created',
+      guardiansCreated: 1,
+      guardiansLinked: 3,
+      guardianConflicts: 1,
+    });
+
+    // Verify existing visitor name ("Sunita Devi") was NOT overwritten by "Suman Devi"
+    const motherVisitor = await Visitor.findOne({
+      schoolId: schoolA._id,
+      phone: '9876543211',
+    }).lean();
+    expect(motherVisitor?.name).toBe('Sunita Devi');
+
+    // Both siblings are linked to the same Father Visitor document
+    const fatherVisitor = await Visitor.findOne({
+      schoolId: schoolA._id,
+      phone: '9876543210',
+    }).lean();
+    expect(fatherVisitor).not.toBeNull();
+    const fatherLinks = await GuardianLink.find({
+      schoolId: schoolA._id,
+      visitorId: fatherVisitor?._id,
+      approved: true,
+    }).lean();
+    expect(fatherLinks).toHaveLength(2);
+
+    // Template endpoint includes the new guardian columns
+    const templateRes = await downloadTemplateRoute(
+      new NextRequest(
+        `http://localhost:3000/api/schools/${String(schoolA._id)}/students/template?locale=en`
+      ),
+      { params: Promise.resolve({ schoolId: String(schoolA._id) }) }
+    );
+    const templateCsv = await templateRes.text();
+    expect(templateCsv).toContain(
+      'admissionNo,name,className,section,rollNumber,fatherName,fatherPhone,motherName,motherPhone,guardianName,guardianPhone,guardianRelation'
+    );
+  });
+
+  it('validates photoKey via HeadObject on visit save (must start with schoolId/, exist, and be <= 1 MB) and verifies Netlify scheduled function', async () => {
+    const { schoolA, schoolB, guardAId } = await seedTwoSchools();
+
+    const student = await Student.create({
+      schoolId: schoolA._id,
+      admissionNo: 'ADM-P1',
+      name: 'Aarav Kumar',
+      className: '5',
+      section: 'A',
+    });
+
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(guardAId),
+        name: 'Guard A',
+        phone: '9999999992',
+        role: 'guard',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+
+    // 1. Upload sign rejects > 1 MB (400)
+    const signTooLargeRes = await signUploadRoute(
+      new NextRequest('http://localhost:3000/api/uploads/sign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          contentType: 'image/jpeg',
+          contentLength: 1_500_000,
+        }),
+      })
+    );
+    expect(signTooLargeRes.status).toBe(400);
+
+    // 2. Visit save with photoKey not starting with `${schoolId}/` -> 400
+    const wrongPrefixRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-photo-wrong-prefix',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          photoKey: `${String(schoolB._id)}/visitors/other.jpg`,
+          studentIds: [String(student._id)],
+          purpose: 'Pickup',
+          reasonCode: 'Relative',
+        }),
+      })
+    );
+    expect(wrongPrefixRes.status).toBe(400);
+
+    // 3. Visit save when HeadObject reports object does NOT exist -> 400
+    setHeadObjectInspector(async () => ({
+      exists: false,
+      contentLength: 0,
+    }));
+    const missingObjRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-photo-missing-obj',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          photoKey: `${String(schoolA._id)}/visitors/missing.jpg`,
+          studentIds: [String(student._id)],
+          purpose: 'Pickup',
+          reasonCode: 'Relative',
+        }),
+      })
+    );
+    expect(missingObjRes.status).toBe(400);
+
+    // 4. Visit save when HeadObject reports object > 1 MB -> 400
+    setHeadObjectInspector(async () => ({
+      exists: true,
+      contentLength: 1_048_577, // 1 MB + 1 byte
+      contentType: 'image/jpeg',
+    }));
+    const oversizeObjRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-photo-oversize-obj',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          photoKey: `${String(schoolA._id)}/visitors/oversize.jpg`,
+          studentIds: [String(student._id)],
+          purpose: 'Pickup',
+          reasonCode: 'Relative',
+        }),
+      })
+    );
+    expect(oversizeObjRes.status).toBe(400);
+
+    // 5. Visit save when HeadObject reports existing object <= 1 MB -> 201
+    setHeadObjectInspector(async () => ({
+      exists: true,
+      contentLength: 145_000,
+      contentType: 'image/jpeg',
+    }));
+    const validPhotoVisitRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-photo-valid-obj',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          photoKey: `${String(schoolA._id)}/visitors/valid.jpg`,
+          studentIds: [String(student._id)],
+          purpose: 'Pickup',
+          reasonCode: 'Relative',
+        }),
+      })
+    );
+    expect(validPhotoVisitRes.status).toBe(201);
+
+    // 6. Verify Netlify Scheduled Function schedule is 17:05 IST (11:35 UTC = '35 11 * * *') and handler works
+    expect(closeVisitsScheduleConfig.schedule).toBe('35 11 * * *');
+    const scheduledRes = await closeVisitsScheduledHandler();
+    expect(scheduledRes.status).toBe(200);
   });
 });

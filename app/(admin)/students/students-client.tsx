@@ -56,6 +56,13 @@ export function StudentsClient({ schoolId }: { schoolId: string }) {
     className: '',
     section: '',
     rollNumber: '',
+    fatherName: '',
+    fatherPhone: '',
+    motherName: '',
+    motherPhone: '',
+    guardianName: '',
+    guardianPhone: '',
+    guardianRelation: '',
   });
   const [previewRows, setPreviewRows] = useState<MappedPreviewRow[]>([]);
   const [importReport, setImportReport] = useState<ImportExecutionSummary | null>(
@@ -195,6 +202,13 @@ export function StudentsClient({ schoolId }: { schoolId: string }) {
       className: data.suggestedMapping?.className ?? '',
       section: data.suggestedMapping?.section ?? '',
       rollNumber: data.suggestedMapping?.rollNumber ?? '',
+      fatherName: data.suggestedMapping?.fatherName ?? '',
+      fatherPhone: data.suggestedMapping?.fatherPhone ?? '',
+      motherName: data.suggestedMapping?.motherName ?? '',
+      motherPhone: data.suggestedMapping?.motherPhone ?? '',
+      guardianName: data.suggestedMapping?.guardianName ?? '',
+      guardianPhone: data.suggestedMapping?.guardianPhone ?? '',
+      guardianRelation: data.suggestedMapping?.guardianRelation ?? '',
     });
     setPreviewRows(data.previewRows ?? []);
   };
@@ -320,6 +334,13 @@ export function StudentsClient({ schoolId }: { schoolId: string }) {
                     ['className', t('className')],
                     ['section', t('section')],
                     ['rollNumber', t('rollNumber')],
+                    ['fatherName', t('fatherName')],
+                    ['fatherPhone', t('fatherPhone')],
+                    ['motherName', t('motherName')],
+                    ['motherPhone', t('motherPhone')],
+                    ['guardianName', t('guardianName')],
+                    ['guardianPhone', t('guardianPhone')],
+                    ['guardianRelation', t('guardianRelation')],
                   ] as const
                 ).map(([fieldKey, label]) => (
                   <div
@@ -410,6 +431,26 @@ export function StudentsClient({ schoolId }: { schoolId: string }) {
                       {importReport.failed}
                     </span>
                     <span>{t('failed')}</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-1 text-center text-[10px]">
+                  <div className="rounded bg-white p-1.5">
+                    <span className="block font-bold text-emerald-700">
+                      {importReport.guardiansCreated}
+                    </span>
+                    <span>{t('guardiansCreated')}</span>
+                  </div>
+                  <div className="rounded bg-white p-1.5">
+                    <span className="block font-bold text-indigo-700">
+                      {importReport.guardiansLinked}
+                    </span>
+                    <span>{t('guardiansLinked')}</span>
+                  </div>
+                  <div className="rounded bg-white p-1.5">
+                    <span className="block font-bold text-amber-700">
+                      {importReport.guardianConflicts}
+                    </span>
+                    <span>{t('guardianConflicts')}</span>
                   </div>
                 </div>
 

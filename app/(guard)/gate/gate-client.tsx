@@ -9,6 +9,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GUARDIAN_RELATIONS, type GuardianRelation } from '@/models/GuardianLink';
+import {
+  UNAPPROVED_REASON_CODES,
+  type UnapprovedReasonCode,
+} from '@/models/Visit';
 import { gatePurposes, type GatePurpose } from '@/lib/validations';
 
 const CONSENT_VERSION = 'v1.0';
@@ -67,10 +71,12 @@ export function GateClient({ schoolId }: { schoolId: string }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchStudentItem[]>([]);
 
-  // Purpose & approval
-  const [purpose, setPurpose] = useState<GatePurpose>('Pickup');
+  // Purpose & approval (no default selection for purpose)
+  const [purpose, setPurpose] = useState<GatePurpose | ''>('');
   const [purposeNote, setPurposeNote] = useState('');
-  const [unapprovedReason, setUnapprovedReason] = useState('');
+  const [reasonCode, setReasonCode] = useState<UnapprovedReasonCode | ''>('');
+  const [reasonText, setReasonText] = useState('');
+  const [confirmUnapprovedPickup, setConfirmUnapprovedPickup] = useState(false);
   const [clientId, setClientId] = useState<string>(() =>
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
@@ -94,9 +100,11 @@ export function GateClient({ schoolId }: { schoolId: string }) {
     setSelectedStudents(new Map());
     setSearchQuery('');
     setSearchResults([]);
-    setPurpose('Pickup');
+    setPurpose('');
     setPurposeNote('');
-    setUnapprovedReason('');
+    setReasonCode('');
+    setReasonText('');
+    setConfirmUnapprovedPickup(false);
     setClientId(crypto.randomUUID());
     setErrorMsg(null);
   };
@@ -288,19 +296,8 @@ export function GateClient({ schoolId }: { schoolId: string }) {
     selectedIds.length > 0 &&
     selectedIds.every((id) => linkedStudentIdSet.has(id));
 
-  const handleSaveVisit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg(null);
-
-    if (selectedIds.length === 0) {
-      setErrorMsg('Please select at least one student');
-      return;
-    }
-
-    if (!isAllSelectedApproved && unapprovedReason.trim().length < 5) {
-      setErrorMsg(t('unapprovedReasonLabel'));
-      return;
-    }
+  const submitVisitToServer = async () => {
+    if (!purpose) return;
 
     setSubmitting(true);
     try {
@@ -319,9 +316,11 @@ export function GateClient({ schoolId }: { schoolId: string }) {
           studentIds: selectedIds,
           purpose,
           purposeNote: purpose === 'Other' ? purposeNote.trim() : undefined,
-          unapprovedReason: !isAllSelectedApproved
-            ? unapprovedReason.trim()
-            : undefined,
+          reasonCode: !isAllSelectedApproved && reasonCode ? reasonCode : undefined,
+          reasonText:
+            !isAllSelectedApproved && reasonText.trim()
+              ? reasonText.trim()
+              : undefined,
         }),
       });
 
@@ -331,12 +330,47 @@ export function GateClient({ schoolId }: { schoolId: string }) {
         return;
       }
 
+      setConfirmUnapprovedPickup(false);
       setStep('confirmed');
     } catch {
       setErrorMsg('Network error saving visit');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSaveVisit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+
+    if (selectedIds.length === 0) {
+      setErrorMsg('Please select at least one student');
+      return;
+    }
+
+    if (!purpose) {
+      setErrorMsg(t('purposeHeading'));
+      return;
+    }
+
+    if (!isAllSelectedApproved) {
+      if (!reasonCode) {
+        setErrorMsg(t('unapprovedReasonLabel'));
+        return;
+      }
+      if (reasonCode === 'Other' && reasonText.trim().length < 5) {
+        setErrorMsg(t('unapprovedReasonOtherLabel'));
+        return;
+      }
+    }
+
+    // Second confirmation required when purpose === 'Pickup' and visitor is unapproved
+    if (purpose === 'Pickup' && !isAllSelectedApproved && !confirmUnapprovedPickup) {
+      setConfirmUnapprovedPickup(true);
+      return;
+    }
+
+    await submitVisitToServer();
   };
 
   if (step === 'confirmed') {
@@ -745,7 +779,7 @@ export function GateClient({ schoolId }: { schoolId: string }) {
             </CardContent>
           </Card>
 
-          {/* Step f: Approval Status & Unapproved Reason */}
+          {/* Step f: Approval Status & Unapproved Reason Chips */}
           {selectedIds.length > 0 && (
             <Card
               className={
@@ -766,34 +800,101 @@ export function GateClient({ schoolId }: { schoolId: string }) {
                 </p>
 
                 {!isAllSelectedApproved && (
-                  <div className="space-y-1">
-                    <Label
-                      htmlFor="unapprovedReason"
-                      className="text-xs text-red-900"
-                    >
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-red-900">
                       {t('unapprovedReasonLabel')}
-                    </Label>
-                    <Input
-                      id="unapprovedReason"
-                      placeholder={t('unapprovedReasonPlaceholder')}
-                      value={unapprovedReason}
-                      onChange={(e) => setUnapprovedReason(e.target.value)}
-                      required
-                      minLength={5}
-                      className="h-10 border-red-300 bg-white text-xs"
-                    />
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {UNAPPROVED_REASON_CODES.map((rc) => (
+                        <button
+                          key={rc}
+                          type="button"
+                          onClick={() => {
+                            setReasonCode(rc);
+                            setConfirmUnapprovedPickup(false);
+                          }}
+                          className={`min-h-10 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors ${
+                            reasonCode === rc
+                              ? 'border-red-900 bg-red-900 text-white'
+                              : 'border-red-300 bg-white text-red-900'
+                          }`}
+                        >
+                          {t(`reasons.${rc}`)}
+                        </button>
+                      ))}
+                    </div>
+
+                    {reasonCode === 'Other' && (
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="unapprovedReasonText"
+                          className="text-xs text-red-900"
+                        >
+                          {t('unapprovedReasonOtherLabel')}
+                        </Label>
+                        <Input
+                          id="unapprovedReasonText"
+                          placeholder={t('unapprovedReasonPlaceholder')}
+                          value={reasonText}
+                          onChange={(e) => setReasonText(e.target.value)}
+                          required
+                          minLength={5}
+                          className="h-10 border-red-300 bg-white text-xs"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
             </Card>
           )}
 
+          {/* Second confirmation when purpose === 'Pickup' and visitor is unapproved */}
+          {confirmUnapprovedPickup &&
+            purpose === 'Pickup' &&
+            !isAllSelectedApproved && (
+              <Card className="border-2 border-amber-500 bg-amber-50">
+                <CardContent className="space-y-3 pt-4 text-xs">
+                  <p className="font-bold text-amber-950">
+                    {t('unapprovedPickupConfirm')}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={submitting}
+                      onClick={() => void submitVisitToServer()}
+                    >
+                      {t('confirmAllowPickup')}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setConfirmUnapprovedPickup(false)}
+                    >
+                      {t('cancelPickup')}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
           {/* Step g: Save Visit */}
           <Button
             type="submit"
             size="lg"
             className="w-full"
-            disabled={submitting || uploadingPhoto || selectedIds.length === 0}
+            disabled={
+              submitting ||
+              uploadingPhoto ||
+              selectedIds.length === 0 ||
+              !purpose ||
+              (!isAllSelectedApproved && !reasonCode) ||
+              (!isAllSelectedApproved &&
+                reasonCode === 'Other' &&
+                reasonText.trim().length < 5)
+            }
           >
             {submitting ? t('savingVisit') : t('saveVisitBtn')}
           </Button>

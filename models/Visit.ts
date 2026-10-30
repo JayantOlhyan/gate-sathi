@@ -16,6 +16,15 @@ export const VISIT_PURPOSES = [
 
 export type VisitPurpose = (typeof VISIT_PURPOSES)[number];
 
+export const UNAPPROVED_REASON_CODES = [
+  'Relative',
+  'Neighbour',
+  'Driver/auto',
+  'Other',
+] as const;
+
+export type UnapprovedReasonCode = (typeof UNAPPROVED_REASON_CODES)[number];
+
 export interface IVisit extends Document {
   schoolId: Types.ObjectId;
   clientId: string;
@@ -24,7 +33,8 @@ export interface IVisit extends Document {
   purpose: VisitPurpose;
   purposeNote?: string;
   isApproved: boolean;
-  unapprovedReason?: string;
+  reasonCode?: UnapprovedReasonCode;
+  reasonText?: string;
   entryAt: Date;
   exitAt: Date | null;
   leftWithStudent?: boolean;
@@ -76,7 +86,11 @@ const VisitSchema = new Schema<IVisit>(
       required: true,
       default: false,
     },
-    unapprovedReason: {
+    reasonCode: {
+      type: String,
+      enum: UNAPPROVED_REASON_CODES,
+    },
+    reasonText: {
       type: String,
       trim: true,
     },
@@ -141,7 +155,8 @@ export async function recordVisit(input: {
   purpose: VisitPurpose;
   checkedInBy: Types.ObjectId | string;
   isApproved?: boolean;
-  unapprovedReason?: string;
+  reasonCode?: UnapprovedReasonCode;
+  reasonText?: string;
   entryAt?: Date;
   exitAt?: Date | null;
   notes?: string;

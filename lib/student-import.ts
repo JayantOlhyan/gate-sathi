@@ -1,9 +1,16 @@
 import * as XLSX from 'xlsx';
 import { Types } from 'mongoose';
 import { Student } from '@/models/Student';
+import { Visitor } from '@/models/Visitor';
+import {
+  GuardianLink,
+  GUARDIAN_RELATIONS,
+  type GuardianRelation,
+} from '@/models/GuardianLink';
 import { writeAuditLog } from '@/lib/audit';
 import {
   columnMappingSchema,
+  indianPhoneSchema,
   studentImportRowSchema,
   type ColumnMapping,
 } from '@/lib/validations';
@@ -60,7 +67,100 @@ const HEADER_SYNONYMS: Record<keyof ColumnMapping, string[]> = {
     'रोल नंबर',
     'अनुक्रमांक',
   ],
+  fatherName: [
+    'fathername',
+    'father_name',
+    'father name',
+    'पिता का नाम',
+    'पिता नाम',
+  ],
+  fatherPhone: [
+    'fatherphone',
+    'father_phone',
+    'father phone',
+    'father mobile',
+    'पिता का मोबाइल',
+    'पिता का फोन',
+    'पिता मोबाइल नंबर',
+  ],
+  motherName: [
+    'mothername',
+    'mother_name',
+    'mother name',
+    'माता का नाम',
+    'माता नाम',
+  ],
+  motherPhone: [
+    'motherphone',
+    'mother_phone',
+    'mother phone',
+    'mother mobile',
+    'माता का मोबाइल',
+    'माता का फोन',
+    'माता मोबाइल नंबर',
+  ],
+  guardianName: [
+    'guardianname',
+    'guardian_name',
+    'guardian name',
+    'अभिभावक का नाम',
+    'संरक्षक का नाम',
+  ],
+  guardianPhone: [
+    'guardianphone',
+    'guardian_phone',
+    'guardian phone',
+    'guardian mobile',
+    'अभिभावक का मोबाइल',
+    'अभिभावक का फोन',
+    'अभिभावक मोबाइल नंबर',
+  ],
+  guardianRelation: [
+    'guardianrelation',
+    'guardian_relation',
+    'guardian relation',
+    'relation',
+    'अभिभावक का संबंध',
+    'अभिभावक संबंध',
+    'संबंध',
+  ],
 };
+
+const RELATION_ALIASES: Record<string, GuardianRelation> = {
+  father: 'Father',
+  पिता: 'Father',
+  mother: 'Mother',
+  माता: 'Mother',
+  grandparent: 'Grandparent',
+  दादा: 'Grandparent',
+  दादी: 'Grandparent',
+  नाना: 'Grandparent',
+  नानी: 'Grandparent',
+  sibling: 'Sibling',
+  भाई: 'Sibling',
+  बहन: 'Sibling',
+  uncle: 'Uncle',
+  चाचा: 'Uncle',
+  मामा: 'Uncle',
+  ताऊ: 'Uncle',
+  aunt: 'Aunt',
+  चाची: 'Aunt',
+  मामी: 'Aunt',
+  बुआ: 'Aunt',
+  मौसी: 'Aunt',
+  other: 'Other',
+  अन्य: 'Other',
+};
+
+export function normalizeGuardianRelation(raw?: string): GuardianRelation {
+  if (!raw) return 'Other';
+  const trimmed = raw.trim();
+  if ((GUARDIAN_RELATIONS as readonly string[]).includes(trimmed)) {
+    return trimmed as GuardianRelation;
+  }
+  const alias = RELATION_ALIASES[trimmed.toLowerCase()];
+  return alias ?? 'Other';
+}
 
 export function autoDetectColumnMapping(headers: string[]): Partial<ColumnMapping> {
   const mapping: Partial<ColumnMapping> = {};
@@ -199,6 +299,9 @@ export interface ImportRowReport {
   admissionNo: string;
   name: string;
   status: 'created' | 'updated' | 'failed';
+  guardiansCreated: number;
+  guardiansLinked: number;
+  guardianConflicts: number;
   reason: string;
 }
 
@@ -207,6 +310,9 @@ export interface ImportExecutionSummary {
   created: number;
   updated: number;
   failed: number;
+  guardiansCreated: number;
+  guardiansLinked: number;
+  guardianConflicts: number;
   rows: ImportRowReport[];
   reportCsv: string;
 }
@@ -219,17 +325,35 @@ function escapeCsvCell(value: string): string {
 }
 
 export function buildImportReportCsv(rows: ImportRowReport[]): string {
-  const header = ['rowNumber', 'admissionNo', 'name', 'status', 'reason'].join(',');
+  const header = [
+    'rowNumber',
+    'admissionNo',
+    'name',
+    'status',
+    'guardiansCreated',
+    'guardiansLinked',
+    'guardianConflicts',
+    'reason',
+  ].join(',');
   const lines = rows.map((r) =>
     [
       String(r.rowNumber),
       escapeCsvCell(r.admissionNo),
       escapeCsvCell(r.name),
       r.status,
+      String(r.guardiansCreated),
+      String(r.guardiansLinked),
+      String(r.guardianConflicts),
       escapeCsvCell(r.reason),
     ].join(',')
   );
   return [header, ...lines].join('\n');
+}
+
+interface GuardianCandidate {
+  name: string;
+  phone: string;
+  relation: GuardianRelation;
 }
 
 interface ValidatedImportRow {
@@ -240,6 +364,7 @@ interface ValidatedImportRow {
   className: string;
   section: string;
   rollNumber: string;
+  guardians: GuardianCandidate[];
 }
 
 interface BulkWriteErrorItem {
@@ -272,6 +397,9 @@ export async function executeStudentImport(params: {
 
   const map = parsedMapping.data;
   const schoolObjectId = new Types.ObjectId(String(params.schoolId));
+  const approvedByObjectId = Types.ObjectId.isValid(String(params.userId))
+    ? new Types.ObjectId(String(params.userId))
+    : new Types.ObjectId();
 
   // Step 1: Validate all rows in memory first
   const rows: ImportRowReport[] = new Array(rawRows.length);
@@ -297,10 +425,43 @@ export async function executeStudentImport(params: {
         admissionNo: candidate.admissionNo,
         name: candidate.name,
         status: 'failed',
+        guardiansCreated: 0,
+        guardiansLinked: 0,
+        guardianConflicts: 0,
         reason,
       };
       continue;
     }
+
+    const guardians: GuardianCandidate[] = [];
+
+    const extractGuardian = (
+      phoneCol: string | undefined,
+      nameCol: string | undefined,
+      rel: GuardianRelation
+    ) => {
+      if (!phoneCol) return;
+      const rawPhone = (raw[phoneCol] ?? '').trim();
+      if (!rawPhone) return;
+      const parsedPhone = indianPhoneSchema.safeParse(rawPhone);
+      if (!parsedPhone.success) return;
+      const gName = (nameCol ? (raw[nameCol] ?? '') : '').trim() || rel;
+      guardians.push({
+        phone: parsedPhone.data,
+        name: gName,
+        relation: rel,
+      });
+    };
+
+    extractGuardian(map.fatherPhone, map.fatherName, 'Father');
+    extractGuardian(map.motherPhone, map.motherName, 'Mother');
+    extractGuardian(
+      map.guardianPhone,
+      map.guardianName,
+      normalizeGuardianRelation(
+        map.guardianRelation ? raw[map.guardianRelation] : undefined
+      )
+    );
 
     const data = validated.data;
     validRows.push({
@@ -311,6 +472,7 @@ export async function executeStudentImport(params: {
       className: data.className,
       section: data.section,
       rollNumber: data.rollNumber ?? '',
+      guardians,
     });
   }
 
@@ -329,7 +491,6 @@ export async function executeStudentImport(params: {
 
     const knownExistingSet = new Set(existingDocs.map((d) => d.admissionNo));
 
-    // Pre-assign created vs updated status before bulkWrite
     for (const vr of validRows) {
       if (knownExistingSet.has(vr.admissionNo)) {
         rows[vr.reportIndex] = {
@@ -337,6 +498,9 @@ export async function executeStudentImport(params: {
           admissionNo: vr.admissionNo,
           name: vr.name,
           status: 'updated',
+          guardiansCreated: 0,
+          guardiansLinked: 0,
+          guardianConflicts: 0,
           reason: 'Updated existing student by admissionNo',
         };
       } else {
@@ -346,6 +510,9 @@ export async function executeStudentImport(params: {
           admissionNo: vr.admissionNo,
           name: vr.name,
           status: 'created',
+          guardiansCreated: 0,
+          guardiansLinked: 0,
+          guardianConflicts: 0,
           reason: 'Created new student',
         };
       }
@@ -400,13 +567,15 @@ export async function executeStudentImport(params: {
                 admissionNo: failedRow.admissionNo,
                 name: failedRow.name,
                 status: 'failed',
+                guardiansCreated: 0,
+                guardiansLinked: 0,
+                guardianConflicts: 0,
                 reason:
                   we.errmsg ?? we.message ?? 'Database bulkWrite error on row',
               };
             }
           }
         } else {
-          // Entire chunk failed unexpectedly
           const message =
             err instanceof Error ? err.message : 'Database bulkWrite failed';
           for (const failedRow of chunk) {
@@ -415,9 +584,89 @@ export async function executeStudentImport(params: {
               admissionNo: failedRow.admissionNo,
               name: failedRow.name,
               status: 'failed',
+              guardiansCreated: 0,
+              guardiansLinked: 0,
+              guardianConflicts: 0,
               reason: message,
             };
           }
+        }
+      }
+    }
+
+    // Step 5: Process optional guardian columns for rows that have guardians and succeeded
+    const rowsWithGuardians = validRows.filter(
+      (vr) =>
+        vr.guardians.length > 0 &&
+        rows[vr.reportIndex]?.status !== 'failed'
+    );
+
+    if (rowsWithGuardians.length > 0) {
+      const admNosForGuardians = Array.from(
+        new Set(rowsWithGuardians.map((r) => r.admissionNo))
+      );
+      const studentDocs = await Student.find(
+        {
+          schoolId: schoolObjectId,
+          admissionNo: { $in: admNosForGuardians },
+        },
+        { _id: 1, admissionNo: 1 }
+      ).lean();
+
+      const studentIdByAdmNo = new Map<string, Types.ObjectId>();
+      for (const sd of studentDocs) {
+        studentIdByAdmNo.set(sd.admissionNo, sd._id as Types.ObjectId);
+      }
+
+      const now = new Date();
+      for (const vr of rowsWithGuardians) {
+        const studentObjectId = studentIdByAdmNo.get(vr.admissionNo);
+        const rowReport = rows[vr.reportIndex];
+        if (!studentObjectId || !rowReport) continue;
+
+        for (const g of vr.guardians) {
+          let visitor = await Visitor.findOne({
+            schoolId: schoolObjectId,
+            phone: g.phone,
+          });
+
+          if (!visitor) {
+            visitor = await Visitor.create({
+              schoolId: schoolObjectId,
+              phone: g.phone,
+              name: g.name,
+              defaultRelation: g.relation,
+              isBlocked: false,
+            });
+            rowReport.guardiansCreated += 1;
+          } else if (
+            visitor.name.trim().toLowerCase() !== g.name.trim().toLowerCase()
+          ) {
+            // Never overwrite an existing visitor name silently; count conflict instead
+            rowReport.guardianConflicts += 1;
+            rowReport.reason += `; Guardian phone ${g.phone} name conflict (kept "${visitor.name}", ignored "${g.name}")`;
+          }
+
+          await GuardianLink.findOneAndUpdate(
+            {
+              schoolId: schoolObjectId,
+              studentId: studentObjectId,
+              visitorId: visitor._id,
+            },
+            {
+              $set: {
+                schoolId: schoolObjectId,
+                studentId: studentObjectId,
+                visitorId: visitor._id,
+                relation: g.relation,
+                approved: true,
+                approvedBy: approvedByObjectId,
+                approvedAt: now,
+              },
+            },
+            { upsert: true, new: true, runValidators: true }
+          );
+          rowReport.guardiansLinked += 1;
         }
       }
     }
@@ -426,10 +675,17 @@ export async function executeStudentImport(params: {
   let created = 0;
   let updated = 0;
   let failed = 0;
+  let guardiansCreated = 0;
+  let guardiansLinked = 0;
+  let guardianConflicts = 0;
+
   for (const r of rows) {
     if (r.status === 'created') created += 1;
     else if (r.status === 'updated') updated += 1;
     else failed += 1;
+    guardiansCreated += r.guardiansCreated;
+    guardiansLinked += r.guardiansLinked;
+    guardianConflicts += r.guardianConflicts;
   }
 
   await writeAuditLog({
@@ -442,6 +698,9 @@ export async function executeStudentImport(params: {
       created,
       updated,
       failed,
+      guardiansCreated,
+      guardiansLinked,
+      guardianConflicts,
     },
   });
 
@@ -450,6 +709,9 @@ export async function executeStudentImport(params: {
     created,
     updated,
     failed,
+    guardiansCreated,
+    guardiansLinked,
+    guardianConflicts,
     rows,
     reportCsv: buildImportReportCsv(rows),
   };
@@ -458,14 +720,14 @@ export async function executeStudentImport(params: {
 export function generateStudentTemplateCsv(locale: 'hi' | 'en' = 'en'): string {
   if (locale === 'hi') {
     return [
-      'प्रवेश संख्या,नाम,कक्षा,वर्ग,रोल नंबर',
-      'ADM-2026-101,आरव कुमार,5,A,101',
-      'ADM-2026-102,प्रिया शर्मा,5,A,102',
+      'प्रवेश संख्या,नाम,कक्षा,वर्ग,रोल नंबर,पिता का नाम,पिता का मोबाइल,माता का नाम,माता का मोबाइल,अभिभावक का नाम,अभिभावक का मोबाइल,अभिभावक का संबंध',
+      'ADM-2026-101,आरव कुमार,5,A,101,राकेश कुमार,9810000001,सुनीता देवी,9810000002,,,',
+      'ADM-2026-102,प्रिया शर्मा,5,A,102,दिनेश शर्मा,9810000003,मीना शर्मा,9810000004,सुरेश शर्मा,9810000005,Uncle',
     ].join('\n');
   }
   return [
-    'admissionNo,name,className,section,rollNumber',
-    'ADM-2026-101,Aarav Kumar,5,A,101',
-    'ADM-2026-102,Priya Sharma,5,A,102',
+    'admissionNo,name,className,section,rollNumber,fatherName,fatherPhone,motherName,motherPhone,guardianName,guardianPhone,guardianRelation',
+    'ADM-2026-101,Aarav Kumar,5,A,101,Rakesh Kumar,9810000001,Sunita Devi,9810000002,,,',
+    'ADM-2026-102,Priya Sharma,5,A,102,Dinesh Sharma,9810000003,Meena Sharma,9810000004,Suresh Sharma,9810000005,Uncle',
   ].join('\n');
 }
