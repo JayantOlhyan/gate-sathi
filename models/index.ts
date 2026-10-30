@@ -21,3 +21,5 @@ export {
 export { AuditLog, type IAuditLog } from './AuditLog';
 export { RateLimit, type IRateLimit } from './RateLimit';
 export { OtpRequest, type IOtpRequest } from './OtpRequest';
+export { Lead, type ILead } from './Lead';
+

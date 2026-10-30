@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { AppHeader } from '@/components/app-header';
+import { InstallPrompt } from '@/components/install-prompt';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
 
@@ -29,6 +30,7 @@ export default async function DashboardPage() {
     <div className="flex flex-1 flex-col">
       <AppHeader showLogout />
       <main className="flex-1 space-y-4 p-4">
+        <InstallPrompt variant="compact" />
         <Card>
           <CardHeader>
             <span className="inline-block w-fit rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">

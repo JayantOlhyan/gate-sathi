@@ -186,3 +186,14 @@ export const gateExitVisitBodySchema = z.object({
   schoolId: z.string().trim().min(1),
   leftWithStudent: z.boolean().optional().default(false),
 });
+
+export const leadCreateBodySchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(120),
+  schoolName: z.string().trim().min(1, 'School name is required').max(200),
+  role: z.string().trim().min(1, 'Role is required').max(80),
+  phone: indianPhoneSchema,
+  message: z.string().trim().max(1000).optional().default(''),
+  website: z.string().optional().default(''),
+  honeypot: z.string().optional().default(''),
+});
+

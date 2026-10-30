@@ -14,9 +14,20 @@ import bcrypt from 'bcryptjs';
 import * as XLSX from 'xlsx';
 
 const mockAuth = vi.fn();
+const mockRedirect = vi.fn((url: string) => {
+  throw new Error(`NEXT_REDIRECT:${url}`);
+});
 
 vi.mock('@/auth', () => ({
   auth: () => mockAuth(),
+}));
+
+vi.mock('next/navigation', () => ({
+  redirect: (url: string) => mockRedirect(url),
+}));
+
+vi.mock('next-intl/server', () => ({
+  getTranslations: async () => (key: string) => key,
 }));
 
 import { connectDB } from '@/lib/db';
@@ -49,6 +60,11 @@ import { GET as listInsideVisitsRoute } from '@/app/api/gate/visits/inside/route
 import { POST as markVisitExitRoute } from '@/app/api/gate/visits/[visitId]/exit/route';
 import { POST as cronCloseVisitsRoute } from '@/app/api/cron/close-visits/route';
 import { GET as healthRoute } from '@/app/api/health/route';
+import { POST as createLeadRoute } from '@/app/api/leads/route';
+import { GET as listAdminLeadsRoute } from '@/app/api/admin/leads/route';
+import MarketingLandingPage from '@/app/(marketing)/page';
+import AppRedirectPage from '@/app/app/page';
+import manifest from '@/app/manifest';
 import closeVisitsScheduledHandler, {
   config as closeVisitsScheduleConfig,
 } from '@/netlify/functions/close-visits';
@@ -80,6 +96,7 @@ import {
   AuditLog,
   RateLimit,
   OtpRequest,
+  Lead,
   recordVisit,
 } from '@/models';
 
@@ -101,6 +118,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       AuditLog.syncIndexes(),
       RateLimit.syncIndexes(),
       OtpRequest.syncIndexes(),
+      Lead.syncIndexes(),
     ]);
   }, 60_000);
 
@@ -125,6 +143,7 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       AuditLog.deleteMany({}),
       RateLimit.deleteMany({}),
       OtpRequest.deleteMany({}),
+      Lead.deleteMany({}),
     ]);
   });
 
@@ -1851,5 +1870,209 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     expect(closeVisitsScheduleConfig.schedule).toBe('35 11 * * *');
     const scheduledRes = await closeVisitsScheduledHandler();
     expect(scheduledRes.status).toBe(200);
+  });
+
+  it('renders "/" without auth, redirects "/app" by role or to "/login" when logged out, and sets manifest start_url to "/app"', async () => {
+    // 1. Manifest has start_url "/app" and scope "/"
+    const manifestData = manifest();
+    expect(manifestData.start_url).toBe('/app');
+    expect(manifestData.scope).toBe('/');
+
+    // 2. "/" renders without auth (no redirect thrown)
+    mockAuth.mockResolvedValue(null);
+    const landingElement = await MarketingLandingPage();
+    expect(landingElement).toBeTruthy();
+    expect(mockRedirect).not.toHaveBeenCalled();
+
+    // 3. "/app" redirects to "/login" when logged out
+    await expect(AppRedirectPage()).rejects.toThrow('NEXT_REDIRECT:/login');
+
+    // 4. "/app" redirects guard -> "/gate"
+    mockAuth.mockResolvedValue({
+      user: {
+        id: 'u-guard',
+        phone: '9800000003',
+        role: 'guard',
+        schoolIds: ['SCH-A'],
+        tokenVersion: 0,
+      },
+    });
+    await expect(AppRedirectPage()).rejects.toThrow('NEXT_REDIRECT:/gate');
+
+    // 5. "/app" redirects principal -> "/dashboard"
+    mockAuth.mockResolvedValue({
+      user: {
+        id: 'u-principal',
+        phone: '9800000002',
+        role: 'principal',
+        schoolIds: ['SCH-A'],
+        tokenVersion: 0,
+      },
+    });
+    await expect(AppRedirectPage()).rejects.toThrow('NEXT_REDIRECT:/dashboard');
+
+    // 6. "/app" redirects super_admin -> "/dashboard"
+    mockAuth.mockResolvedValue({
+      user: {
+        id: 'u-super',
+        phone: '9800000001',
+        role: 'super_admin',
+        schoolIds: [],
+        tokenVersion: 0,
+      },
+    });
+    await expect(AppRedirectPage()).rejects.toThrow('NEXT_REDIRECT:/dashboard');
+  });
+
+  it('saves valid leads, silently rejects honeypot submissions, rate-limits the 6th submission per IP per hour with 429, and enforces 403 for non-super_admin on /admin/leads', async () => {
+    const { schoolA } = await seedTwoSchools();
+
+    // 1. Valid submission is saved to leads collection
+    const validRes = await createLeadRoute(
+      new NextRequest('http://localhost:3000/api/leads', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-forwarded-for': '203.0.113.10',
+        },
+        body: JSON.stringify({
+          name: 'Rajesh Verma',
+          schoolName: 'GPS Kakori',
+          role: 'Principal',
+          phone: '9876543210',
+          message: 'Interested in starting a pilot next month.',
+          website: '',
+        }),
+      })
+    );
+    expect(validRes.status).toBe(201);
+    expect(await Lead.countDocuments({})).toBe(1);
+
+    // 2. Honeypot filled -> rejected silently (200 OK, not saved to DB)
+    const honeypotRes = await createLeadRoute(
+      new NextRequest('http://localhost:3000/api/leads', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-forwarded-for': '203.0.113.11',
+        },
+        body: JSON.stringify({
+          name: 'Spam Bot',
+          schoolName: 'Bot School',
+          role: 'Bot',
+          phone: '9876543211',
+          message: 'Buy links',
+          website: 'https://spambot.example.com',
+        }),
+      })
+    );
+    expect(honeypotRes.status).toBe(200);
+    expect(await Lead.countDocuments({})).toBe(1);
+
+    // 3. Rate limit: 5 submissions from same IP in an hour succeed; 6th returns 429
+    const testIp = '203.0.113.55';
+    for (let i = 1; i <= 5; i++) {
+      const res = await createLeadRoute(
+        new NextRequest('http://localhost:3000/api/leads', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-forwarded-for': testIp,
+          },
+          body: JSON.stringify({
+            name: `Teacher ${i}`,
+            schoolName: `School ${i}`,
+            role: 'Principal',
+            phone: `987654320${i}`,
+            message: 'Pilot request',
+          }),
+        })
+      );
+      expect(res.status).toBe(201);
+    }
+
+    const sixthRes = await createLeadRoute(
+      new NextRequest('http://localhost:3000/api/leads', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-forwarded-for': testIp,
+        },
+        body: JSON.stringify({
+          name: 'Teacher 6',
+          schoolName: 'School 6',
+          role: 'Principal',
+          phone: '9876543206',
+          message: 'Pilot request 6',
+        }),
+      })
+    );
+    expect(sixthRes.status).toBe(429);
+
+    // 4. Non-super_admin gets 403 on /admin/leads (both principal and guard)
+    const principalUser = await User.create({
+      name: 'Principal A',
+      phone: '9811112222',
+      passwordHash: 'hash',
+      role: 'principal',
+      schoolIds: [String(schoolA._id)],
+      isActive: true,
+    });
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(principalUser._id),
+        phone: principalUser.phone,
+        role: 'principal',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+    const principalLeadsRes = await listAdminLeadsRoute();
+    expect(principalLeadsRes.status).toBe(403);
+
+    const guardUser = await User.create({
+      name: 'Guard A',
+      phone: '9811113333',
+      passwordHash: 'hash',
+      role: 'guard',
+      schoolIds: [String(schoolA._id)],
+      isActive: true,
+    });
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(guardUser._id),
+        phone: guardUser.phone,
+        role: 'guard',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+    const guardLeadsRes = await listAdminLeadsRoute();
+    expect(guardLeadsRes.status).toBe(403);
+
+    // 5. super_admin gets 200 and sees all saved leads
+    const superAdmin = await User.create({
+      name: 'Super Admin',
+      phone: '9811110000',
+      passwordHash: 'hash',
+      role: 'super_admin',
+      schoolIds: [],
+      isActive: true,
+    });
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(superAdmin._id),
+        phone: superAdmin.phone,
+        role: 'super_admin',
+        schoolIds: [],
+        tokenVersion: 0,
+      },
+    });
+    const superLeadsRes = await listAdminLeadsRoute();
+    expect(superLeadsRes.status).toBe(200);
+    const superLeadsJson = (await superLeadsRes.json()) as {
+      leads: Array<{ schoolName: string }>;
+    };
+    expect(superLeadsJson.leads.length).toBe(6);
   });
 });

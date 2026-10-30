@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { AppHeader } from '@/components/app-header';
+import { InstallPrompt } from '@/components/install-prompt';
 import { connectDB } from '@/lib/db';
 import { isMockOtpActive } from '@/lib/otp';
 import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
@@ -40,6 +41,7 @@ export default async function GatePage() {
     <div className="flex flex-1 flex-col">
       <AppHeader showLogout />
       <main className="flex-1 p-4">
+        <InstallPrompt variant="prominent" />
         <GateClient schoolId={activeSchoolId} mockOtpActive={mockOtpActive} />
       </main>
     </div>

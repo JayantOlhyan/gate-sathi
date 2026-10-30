@@ -1,3 +1,5 @@
+import { ServiceWorkerRegister } from '@/components/sw-register';
+
 export default function AuthLayout({
   children,
 }: Readonly<{
@@ -5,6 +7,7 @@ export default function AuthLayout({
 }>) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[360px] flex-col bg-slate-50 shadow-sm">
+      <ServiceWorkerRegister />
       {children}
     </div>
   );

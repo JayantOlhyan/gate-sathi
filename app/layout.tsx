@@ -3,9 +3,28 @@ import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages } from 'next-intl/server';
 import './globals.css';
 
+const siteUrl = process.env.AUTH_URL || 'https://gate-sathi.netlify.app';
+
 export const metadata: Metadata = {
-  title: 'GateSathi',
-  description: 'Har entry, har bachcha, surakshit.',
+  metadataBase: new URL(siteUrl),
+  manifest: '/manifest.webmanifest',
+  title:
+    'GateSathi (गेटसाथी) — Har entry, har bachcha, surakshit | सरकारी विद्यालयों का डिजिटल आगंतुक रजिस्टर',
+  description:
+    'GateSathi is a free digital visitor register for government schools. सरकारी विद्यालयों के लिए निःशुल्क डिजिटल आगंतुक रजिस्टर — हर एंट्री, हर बच्चा, सुरक्षित।',
+  openGraph: {
+    title: 'GateSathi (गेटसाथी) — Har entry, har bachcha, surakshit.',
+    description:
+      'Free digital visitor register for government schools | सरकारी विद्यालयों के लिए निःशुल्क डिजिटल आगंतुक रजिस्टर',
+    images: [
+      {
+        url: '/brand/logo-horizontal.png',
+        width: 1200,
+        height: 400,
+        alt: 'GateSathi Logo',
+      },
+    ],
+  },
   icons: {
     icon: [
       { url: '/icons/favicon.ico', sizes: 'any' },
@@ -24,7 +43,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
   themeColor: '#1E3A8A',
 };
 

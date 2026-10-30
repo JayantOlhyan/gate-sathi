@@ -9,7 +9,7 @@ import {
   LOGIN_WINDOW_MS,
 } from '@/lib/rate-limit';
 
-export const HEALTH_RATE_LIMIT_MAX = 30;
+const HEALTH_RATE_LIMIT_MAX = 30;
 const fallbackHealthLimiter = new InMemoryRateLimiter();
 
 function extractClientIp(req: NextRequest): string {

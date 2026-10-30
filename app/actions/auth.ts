@@ -5,7 +5,6 @@ import { signIn, signOut } from '@/auth';
 import {
   authenticateWithPhoneAndPassword,
   RateLimitError,
-  getDefaultRouteForRole,
 } from '@/lib/auth-service';
 import { loginSchema } from '@/lib/validations';
 
@@ -45,7 +44,7 @@ export async function loginAction(rawInput: {
 
     return {
       ok: true,
-      redirectTo: getDefaultRouteForRole(user.role),
+      redirectTo: '/app',
     };
   } catch (error) {
     if (error instanceof RateLimitError) {

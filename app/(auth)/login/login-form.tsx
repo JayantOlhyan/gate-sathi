@@ -42,7 +42,7 @@ export function LoginForm() {
         setErrorKey(result.errorCode ?? 'invalidCredentials');
         return;
       }
-      router.push(result.redirectTo ?? '/gate');
+      router.push(result.redirectTo ?? '/app');
       router.refresh();
     });
   };

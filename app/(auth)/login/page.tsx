@@ -2,7 +2,6 @@ import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { auth } from '@/auth';
-import { getDefaultRouteForRole } from '@/lib/auth-service';
 import { LanguageToggle } from '@/components/language-toggle';
 import { LoginForm } from './login-form';
 
@@ -14,7 +13,7 @@ export default async function LoginPage() {
     session = null;
   }
   if (session?.user?.id && session.user.role) {
-    redirect(getDefaultRouteForRole(session.user.role));
+    redirect('/app');
   }
 
   const tLogin = await getTranslations('login');
