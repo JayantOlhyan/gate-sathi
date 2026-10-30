@@ -55,24 +55,36 @@ export function ScrollCraftStoryRuntime() {
       }
 
       if (folioEl) {
+        const isHi = document.documentElement.lang === 'hi';
         const scrollRatio =
           window.scrollY /
           Math.max(
             1,
             document.documentElement.scrollHeight - window.innerHeight
           );
-        const chapter =
-          scrollRatio < 0.16
-            ? 'I · द्वार / The Gate'
+        const chapter = isHi
+          ? scrollRatio < 0.16
+            ? 'I · गेट प्रवेश'
             : scrollRatio < 0.34
-              ? 'II · चुनौती / The Blind Spot'
+              ? 'II · रजिस्टर की समस्या'
               : scrollRatio < 0.62
-                ? 'III · कार्यप्रणाली / 3-Step Flow'
+                ? 'III · 3-स्टेप प्रोसेस'
                 : scrollRatio < 0.8
-                  ? 'IV · सुविधाएं / Capabilities'
+                  ? 'IV · मुख्य फीचर्स'
                   : scrollRatio < 0.92
-                    ? 'V · गोपनीयता / DPDP & Safety'
-                    : 'VI · पायलट / Request Pilot';
+                    ? 'V · प्राइवेसी और सुरक्षा'
+                    : 'VI · पायलट रिक्वेस्ट'
+          : scrollRatio < 0.16
+            ? 'I · The Gate'
+            : scrollRatio < 0.34
+              ? 'II · The Blind Spot'
+              : scrollRatio < 0.62
+                ? 'III · 3-Step Flow'
+                : scrollRatio < 0.8
+                  ? 'IV · Capabilities'
+                  : scrollRatio < 0.92
+                    ? 'V · DPDP & Safety'
+                    : 'VI · Request Pilot';
         if (folioEl.textContent !== chapter) {
           folioEl.textContent = chapter;
         }
