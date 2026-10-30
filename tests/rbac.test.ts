@@ -38,6 +38,17 @@ import {
 } from '@/app/api/schools/[schoolId]/students/[studentId]/guardians/route';
 import { GET as getAdminOverview } from '@/app/api/admin/overview/route';
 import {
+  POST as signUploadRoute,
+  GET as signGetUploadRoute,
+} from '@/app/api/uploads/sign/route';
+import { POST as sendOtpRoute } from '@/app/api/gate/otp/send/route';
+import { POST as verifyOtpRoute } from '@/app/api/gate/otp/verify/route';
+import { GET as gateLookupRoute } from '@/app/api/gate/lookup/route';
+import { POST as createGateVisitRoute } from '@/app/api/gate/visits/route';
+import { GET as listInsideVisitsRoute } from '@/app/api/gate/visits/inside/route';
+import { POST as markVisitExitRoute } from '@/app/api/gate/visits/[visitId]/exit/route';
+import { POST as cronCloseVisitsRoute } from '@/app/api/cron/close-visits/route';
+import {
   authenticateWithPhoneAndPassword,
   RateLimitError,
   SESSION_MAX_AGE_SECONDS,
@@ -45,7 +56,13 @@ import {
   verifyAndRefreshJwtToken,
 } from '@/lib/auth-service';
 import { authConfig } from '@/auth.config';
-import { getRateLimiter } from '@/lib/rate-limit';
+import { getRateLimiter, MongoRateLimiter } from '@/lib/rate-limit';
+import {
+  assertOtpModeSafe,
+  OTP_EXPIRY_MS,
+  sendOtpForVisitor,
+  verifyOtpForVisitor,
+} from '@/lib/otp';
 import { assertNotProduction } from '@/scripts/seed';
 import {
   School,
@@ -55,6 +72,8 @@ import {
   GuardianLink,
   Visit,
   AuditLog,
+  RateLimit,
+  OtpRequest,
   recordVisit,
 } from '@/models';
 
@@ -74,6 +93,8 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       GuardianLink.syncIndexes(),
       Visit.syncIndexes(),
       AuditLog.syncIndexes(),
+      RateLimit.syncIndexes(),
+      OtpRequest.syncIndexes(),
     ]);
   }, 60_000);
 
@@ -95,6 +116,8 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       GuardianLink.deleteMany({}),
       Visit.deleteMany({}),
       AuditLog.deleteMany({}),
+      RateLimit.deleteMany({}),
+      OtpRequest.deleteMany({}),
     ]);
   });
 
@@ -1028,5 +1051,490 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       /NODE_ENV=production/
     );
     expect(() => assertNotProduction('development')).not.toThrow();
+  });
+
+  it('enforces OTP rules: 4th send in an hour rejected, 6th verify attempt rejected, expired code rejected, and mock mode throws in production', async () => {
+    const { schoolA, guardAId } = await seedTwoSchools();
+
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(guardAId),
+        name: 'Guard A',
+        phone: '9999999992',
+        role: 'guard',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+
+    // 1. OTP_MODE=mock throws in production
+    expect(() => assertOtpModeSafe('production', 'mock')).toThrow(
+      /OTP_MODE=mock is forbidden/
+    );
+    expect(() => assertOtpModeSafe('development', 'mock')).not.toThrow();
+
+    const phone = '9812345670';
+    const t0 = Date.now();
+    process.env.OTP_MODE = 'mock';
+    let capturedCode = '';
+    const captureProvider = {
+      async sendOtp(_p: string, code: string) {
+        capturedCode = code;
+      },
+    };
+
+    // 2. Send 3 OTPs within an hour -> all succeed; 4th send in same hour -> rejected (429)
+    await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone,
+      nowMs: t0,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'mock',
+    });
+    await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone,
+      nowMs: t0 + 10_000,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'mock',
+    });
+    await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone,
+      nowMs: t0 + 20_000,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'mock',
+    });
+
+    await expect(
+      sendOtpForVisitor({
+        schoolId: schoolA._id,
+        phone,
+        nowMs: t0 + 30_000,
+        provider: captureProvider,
+        nodeEnv: 'development',
+        otpMode: 'mock',
+      })
+    ).rejects.toMatchObject({ status: 429 });
+
+    // Also verify via route handler that 4th send returns 429
+    const fourthSendRes = await sendOtpRoute(
+      new NextRequest('http://localhost:3000/api/gate/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          phone,
+        }),
+      })
+    );
+    expect(fourthSendRes.status).toBe(429);
+
+    // 3. Max 5 verify attempts, then 6th attempt rejected even with valid code
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await expect(
+        verifyOtpForVisitor({
+          schoolId: schoolA._id,
+          phone,
+          code: '111111',
+          nowMs: t0 + 25_000,
+          nodeEnv: 'development',
+          otpMode: 'msg91',
+        })
+      ).rejects.toMatchObject({ status: 400 });
+    }
+
+    // 6th attempt is rejected with 429 even when providing the real capturedCode
+    await expect(
+      verifyOtpForVisitor({
+        schoolId: schoolA._id,
+        phone,
+        code: capturedCode,
+        nowMs: t0 + 26_000,
+        nodeEnv: 'development',
+        otpMode: 'msg91',
+      })
+    ).rejects.toMatchObject({ status: 429 });
+
+    // 4. Expired code (> 5 minutes) is rejected
+    const phoneExpired = '9812345671';
+    await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone: phoneExpired,
+      nowMs: t0,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'msg91',
+    });
+
+    await expect(
+      verifyOtpForVisitor({
+        schoolId: schoolA._id,
+        phone: phoneExpired,
+        code: capturedCode,
+        nowMs: t0 + OTP_EXPIRY_MS + 1000,
+        nodeEnv: 'development',
+        otpMode: 'msg91',
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: 'OTP has expired',
+    });
+
+    // Verify route handler works for valid OTP in mock mode
+    const phoneValid = '9812345672';
+    process.env.OTP_MODE = 'mock';
+    await sendOtpRoute(
+      new NextRequest('http://localhost:3000/api/gate/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          phone: phoneValid,
+        }),
+      })
+    );
+    const verifyOkRes = await verifyOtpRoute(
+      new NextRequest('http://localhost:3000/api/gate/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          phone: phoneValid,
+          code: '000000',
+        }),
+      })
+    );
+    expect(verifyOkRes.status).toBe(200);
+  });
+
+  it('computes isApproved server-side from GuardianLink, ignores client-sent isApproved, requires unapprovedReason, and handles idempotent clientId', async () => {
+    const { schoolA, schoolB, principalAId, guardAId } = await seedTwoSchools();
+
+    const studentLinked = await Student.create({
+      schoolId: schoolA._id,
+      admissionNo: 'ADM-L1',
+      name: 'Linked Student',
+      className: '5',
+      section: 'A',
+    });
+    const studentUnlinked = await Student.create({
+      schoolId: schoolA._id,
+      admissionNo: 'ADM-U1',
+      name: 'Unlinked Student',
+      className: '6',
+      section: 'B',
+    });
+    const studentInSchoolB = await Student.create({
+      schoolId: schoolB._id,
+      admissionNo: 'ADM-B1',
+      name: 'School B Student',
+      className: '5',
+      section: 'A',
+    });
+
+    const visitor = await Visitor.create({
+      schoolId: schoolA._id,
+      name: 'Rakesh Kumar',
+      phone: '9876543210',
+      photoKey: `${String(schoolA._id)}/visitors/photo-1.jpg`,
+    });
+
+    await GuardianLink.create({
+      schoolId: schoolA._id,
+      studentId: studentLinked._id,
+      visitorId: visitor._id,
+      relation: 'Father',
+      approved: true,
+      approvedBy: principalAId,
+      approvedAt: new Date(),
+    });
+
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(guardAId),
+        name: 'Guard A',
+        phone: '9999999992',
+        role: 'guard',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+
+    // Lookup known visitor returns linked student and signedPhotoUrl
+    const lookupRes = await gateLookupRoute(
+      new NextRequest(
+        `http://localhost:3000/api/gate/lookup?schoolId=${String(schoolA._id)}&phone=9876543210`
+      )
+    );
+    expect(lookupRes.status).toBe(200);
+    const lookupData = await lookupRes.json();
+    expect(lookupData.found).toBe(true);
+    expect(lookupData.linkedStudents).toHaveLength(1);
+    expect(lookupData.visitor.signedPhotoUrl).toContain('r2.cloudflarestorage.com');
+
+    // 1. Linked visitor visiting linked student -> server sets isApproved = true
+    // Also test idempotency: sending the exact same clientId twice creates only 1 Visit and returns same visit
+    const clientId1 = 'visit-uuid-linked-1';
+    const linkedVisitPayload = {
+      schoolId: String(schoolA._id),
+      clientId: clientId1,
+      phone: '9876543210',
+      name: 'Rakesh Kumar',
+      studentIds: [String(studentLinked._id)],
+      purpose: 'Pickup',
+      isApproved: false, // Client tries to spoof false; server must compute true!
+    };
+
+    const createRes1 = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(linkedVisitPayload),
+      })
+    );
+    expect(createRes1.status).toBe(201);
+    const data1 = await createRes1.json();
+    expect(data1.visit.isApproved).toBe(true);
+    expect(data1.idempotent).toBe(false);
+
+    // Duplicate clientId returns existing visit idempotently (status 200, 1 visit in DB)
+    const createRes1Dup = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(linkedVisitPayload),
+      })
+    );
+    expect(createRes1Dup.status).toBe(200);
+    const data1Dup = await createRes1Dup.json();
+    expect(data1Dup.idempotent).toBe(true);
+    expect(String(data1Dup.visit._id)).toBe(String(data1.visit._id));
+    expect(await Visit.countDocuments({ schoolId: schoolA._id })).toBe(1);
+
+    // 2. Unlinked student (or mix of linked + unlinked) -> server computes isApproved = false,
+    // ignores client-sent isApproved: true, and blocks save without unapprovedReason (min 5 chars)
+    const blockedRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-uuid-unlinked-blocked',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          studentIds: [String(studentLinked._id), String(studentUnlinked._id)],
+          purpose: 'Meet student',
+          isApproved: true, // Client tries to spoof true!
+        }),
+      })
+    );
+    expect(blockedRes.status).toBe(400);
+    const blockedBody = await blockedRes.json();
+    expect(blockedBody.isApproved).toBe(false);
+
+    // Succeeds when unapprovedReason (>= 5 chars) is provided, and stores isApproved: false
+    const unapprovedOkRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-uuid-unlinked-ok',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          studentIds: [String(studentLinked._id), String(studentUnlinked._id)],
+          purpose: 'Meet student',
+          unapprovedReason: 'Confirmed with class teacher over phone',
+          isApproved: true, // Spoofed true is still ignored!
+        }),
+      })
+    );
+    expect(unapprovedOkRes.status).toBe(201);
+    const unapprovedOkData = await unapprovedOkRes.json();
+    expect(unapprovedOkData.visit.isApproved).toBe(false);
+    expect(unapprovedOkData.visit.unapprovedReason).toBe(
+      'Confirmed with class teacher over phone'
+    );
+
+    // 3. Guard of School A cannot create a visit for a School B student or sign an upload for School B
+    const crossVisitRes = await createGateVisitRoute(
+      new NextRequest('http://localhost:3000/api/gate/visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          clientId: 'visit-cross-school',
+          phone: '9876543210',
+          name: 'Rakesh Kumar',
+          studentIds: [String(studentInSchoolB._id)],
+          purpose: 'Pickup',
+          unapprovedReason: 'Trying cross school student',
+        }),
+      })
+    );
+    expect(crossVisitRes.status).toBe(403);
+
+    const crossUploadRes = await signUploadRoute(
+      new NextRequest('http://localhost:3000/api/uploads/sign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolB._id),
+          contentType: 'image/jpeg',
+          contentLength: 50_000,
+        }),
+      })
+    );
+    expect(crossUploadRes.status).toBe(403);
+
+    const validUploadRes = await signUploadRoute(
+      new NextRequest('http://localhost:3000/api/uploads/sign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolId: String(schoolA._id),
+          contentType: 'image/jpeg',
+          contentLength: 120_000,
+        }),
+      })
+    );
+    expect(validUploadRes.status).toBe(200);
+    const validUploadData = await validUploadRes.json();
+    expect(validUploadData.photoKey).toMatch(
+      new RegExp(`^${String(schoolA._id)}/visitors/.+\\.jpg$`)
+    );
+
+    // Signing GET for another school's photoKey is also forbidden (403)
+    const crossGetPhotoRes = await signGetUploadRoute(
+      new NextRequest(
+        `http://localhost:3000/api/uploads/sign?schoolId=${String(schoolA._id)}&photoKey=${String(schoolB._id)}/visitors/other.jpg`
+      )
+    );
+    expect(crossGetPhotoRes.status).toBe(403);
+  });
+
+  it('marks exit on open visits, writes visit.exit audit log, and auto-closes only open visits via cron', async () => {
+    const { schoolA, guardAId } = await seedTwoSchools();
+
+    const student = await Student.create({
+      schoolId: schoolA._id,
+      admissionNo: 'ADM-E1',
+      name: 'Aarav Kumar',
+      className: '5',
+      section: 'A',
+    });
+    const visitor = await Visitor.create({
+      schoolId: schoolA._id,
+      name: 'Rakesh Kumar',
+      phone: '9876543210',
+    });
+
+    const visit1 = await Visit.create({
+      schoolId: schoolA._id,
+      clientId: 'visit-exit-1',
+      visitorId: visitor._id,
+      studentIds: [student._id],
+      purpose: 'Pickup',
+      isApproved: true,
+      entryAt: new Date(),
+      exitAt: null,
+      checkedInBy: guardAId,
+    });
+
+    const visit2 = await Visit.create({
+      schoolId: schoolA._id,
+      clientId: 'visit-autoclose-2',
+      visitorId: visitor._id,
+      studentIds: [student._id],
+      purpose: 'Meet student',
+      isApproved: true,
+      entryAt: new Date(),
+      exitAt: null,
+      checkedInBy: guardAId,
+    });
+
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(guardAId),
+        name: 'Guard A',
+        phone: '9999999992',
+        role: 'guard',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+
+    // Inside Now lists both open visits
+    const insideRes = await listInsideVisitsRoute(
+      new NextRequest(
+        `http://localhost:3000/api/gate/visits/inside?schoolId=${String(schoolA._id)}`
+      )
+    );
+    expect(insideRes.status).toBe(200);
+    const insideData = await insideRes.json();
+    expect(insideData.visits).toHaveLength(2);
+
+    // Manually exit visit1 with leftWithStudent: true
+    const exitRes = await markVisitExitRoute(
+      new NextRequest(
+        `http://localhost:3000/api/gate/visits/${String(visit1._id)}/exit`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schoolId: String(schoolA._id),
+            leftWithStudent: true,
+          }),
+        }
+      ),
+      { params: Promise.resolve({ visitId: String(visit1._id) }) }
+    );
+    expect(exitRes.status).toBe(200);
+    const exitData = await exitRes.json();
+    expect(exitData.visit.exitAt).not.toBeNull();
+    expect(exitData.visit.leftWithStudent).toBe(true);
+    expect(exitData.visit.autoClosed).toBe(false);
+
+    // AuditLog recorded visit.exit
+    const exitAudit = await AuditLog.findOne({
+      schoolId: schoolA._id,
+      action: 'visit.exit',
+      entityId: visit1._id,
+    }).lean();
+    expect(exitAudit).not.toBeNull();
+
+    // Auto-close cron job (at 18:00 IST = 12:30 UTC) closes only visit2 (still open) and flags autoClosed: true
+    process.env.CRON_SECRET = 'test-cron-secret';
+    const cronRes = await cronCloseVisitsRoute(
+      new NextRequest(
+        'http://localhost:3000/api/cron/close-visits?now=2026-10-30T12:30:00.000Z',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer test-cron-secret' },
+        }
+      )
+    );
+    expect(cronRes.status).toBe(200);
+    const cronData = await cronRes.json();
+    expect(cronData.closedCount).toBe(1);
+
+    const v1After = await Visit.findById(visit1._id).lean();
+    const v2After = await Visit.findById(visit2._id).lean();
+    expect(v1After?.autoClosed).toBe(false);
+    expect(v2After?.exitAt).not.toBeNull();
+    expect(v2After?.autoClosed).toBe(true);
+
+    // Also verify MongoRateLimiter persists buckets in rateLimits collection
+    const mongoLimiter = new MongoRateLimiter();
+    const r1 = await mongoLimiter.consume('test-mongo-key', 2, 60_000, 1000);
+    const r2 = await mongoLimiter.consume('test-mongo-key', 2, 60_000, 2000);
+    const r3 = await mongoLimiter.consume('test-mongo-key', 2, 60_000, 3000);
+    expect(r1.allowed).toBe(true);
+    expect(r2.allowed).toBe(true);
+    expect(r3.allowed).toBe(false);
   });
 });

@@ -1,16 +1,27 @@
 import { redirect } from 'next/navigation';
-import { getTranslations } from 'next-intl/server';
 import { AppHeader } from '@/components/app-header';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { connectDB } from '@/lib/db';
 import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
+import { School } from '@/models/School';
+import { GateClient } from './gate-client';
 
 export default async function GatePage() {
-  let user;
   let activeSchoolId = '';
 
   try {
-    user = await requireRole('guard', 'principal', 'super_admin');
-    const primarySchoolId = user.schoolIds[0];
+    const user = await requireRole('guard', 'principal', 'super_admin');
+    let primarySchoolId = user.schoolIds[0];
+
+    if (!primarySchoolId && user.role === 'super_admin') {
+      await connectDB();
+      const firstSchool = await School.findOne({ isActive: true })
+        .select('_id')
+        .lean();
+      if (firstSchool?._id) {
+        primarySchoolId = String(firstSchool._id);
+      }
+    }
+
     if (primarySchoolId) {
       const access = await requireSchoolAccess(primarySchoolId);
       activeSchoolId = access.schoolId;
@@ -22,28 +33,11 @@ export default async function GatePage() {
     redirect('/dashboard');
   }
 
-  const t = await getTranslations('gate');
-
   return (
     <div className="flex flex-1 flex-col">
       <AppHeader showLogout />
-      <main className="flex-1 space-y-4 p-4">
-        <Card>
-          <CardHeader>
-            <span className="inline-block w-fit rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
-              {t('badge')}
-            </span>
-            <CardTitle className="pt-1">{t('title')}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-slate-600">
-            <p>{t('placeholder')}</p>
-            {activeSchoolId && (
-              <p className="rounded bg-slate-100 p-2 font-mono text-xs text-slate-700">
-                {t('assignedSchool')}: {activeSchoolId}
-              </p>
-            )}
-          </CardContent>
-        </Card>
+      <main className="flex-1 p-4">
+        <GateClient schoolId={activeSchoolId} />
       </main>
     </div>
   );

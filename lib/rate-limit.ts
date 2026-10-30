@@ -1,3 +1,6 @@
+import { connectDB } from '@/lib/db';
+import { RateLimit } from '@/models/RateLimit';
+
 export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
@@ -65,6 +68,68 @@ export class InMemoryRateLimiter implements RateLimiter {
   }
 }
 
+export class MongoRateLimiter implements RateLimiter {
+  async consume(
+    key: string,
+    limit: number,
+    windowMs: number,
+    nowMs: number = Date.now()
+  ): Promise<RateLimitResult> {
+    await connectDB();
+
+    const now = new Date(nowMs);
+    const windowCutoff = new Date(nowMs - windowMs);
+
+    const existing = await RateLimit.findOne({ key });
+
+    if (!existing || existing.windowStart.getTime() <= windowCutoff.getTime()) {
+      await RateLimit.findOneAndUpdate(
+        { key },
+        {
+          $set: {
+            key,
+            count: 1,
+            windowStart: now,
+          },
+        },
+        { upsert: true, new: true }
+      );
+      return {
+        allowed: true,
+        remaining: Math.max(0, limit - 1),
+        resetAt: new Date(nowMs + windowMs),
+      };
+    }
+
+    if (existing.count >= limit) {
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: new Date(existing.windowStart.getTime() + windowMs),
+      };
+    }
+
+    existing.count += 1;
+    await existing.save();
+
+    return {
+      allowed: true,
+      remaining: Math.max(0, limit - existing.count),
+      resetAt: new Date(existing.windowStart.getTime() + windowMs),
+    };
+  }
+
+  async reset(key: string): Promise<void> {
+    await connectDB();
+    await RateLimit.deleteOne({ key });
+  }
+
+  async clearAll(): Promise<void> {
+    await connectDB();
+    await RateLimit.deleteMany({});
+  }
+}
+
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 export const LOGIN_MAX_PER_PHONE_IP = 5;
 export const LOGIN_MAX_PER_IP = 20;
@@ -79,7 +144,11 @@ export class RateLimitError extends Error {
   }
 }
 
-let activeRateLimiter: RateLimiter = new InMemoryRateLimiter();
+// Switch login limits to MongoRateLimiter; in-memory stays only for tests
+let activeRateLimiter: RateLimiter =
+  process.env.NODE_ENV === 'test'
+    ? new InMemoryRateLimiter()
+    : new MongoRateLimiter();
 
 export function getRateLimiter(): RateLimiter {
   return activeRateLimiter;

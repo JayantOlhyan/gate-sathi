@@ -7,6 +7,7 @@ export interface ISchool extends Document {
   district: string;
   state: string;
   address?: string;
+  closingHourIst: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -41,6 +42,11 @@ const SchoolSchema = new Schema<ISchool>(
     },
     address: {
       type: String,
+      trim: true,
+    },
+    closingHourIst: {
+      type: String,
+      default: '17:00',
       trim: true,
     },
     isActive: {

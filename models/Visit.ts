@@ -1,12 +1,20 @@
 import mongoose, { Schema, type Document, type Model, type Types } from 'mongoose';
 
-export type VisitPurpose =
-  | 'student_pickup'
-  | 'parent_meeting'
-  | 'official_inspection'
-  | 'vendor_delivery'
-  | 'maintenance'
-  | 'other';
+export const VISIT_PURPOSES = [
+  'Meet student',
+  'Pickup',
+  'PTM',
+  'Office work',
+  'Other',
+  'student_pickup',
+  'parent_meeting',
+  'official_inspection',
+  'vendor_delivery',
+  'maintenance',
+  'other',
+] as const;
+
+export type VisitPurpose = (typeof VISIT_PURPOSES)[number];
 
 export interface IVisit extends Document {
   schoolId: Types.ObjectId;
@@ -14,8 +22,13 @@ export interface IVisit extends Document {
   visitorId: Types.ObjectId;
   studentIds: Types.ObjectId[];
   purpose: VisitPurpose;
+  purposeNote?: string;
+  isApproved: boolean;
+  unapprovedReason?: string;
   entryAt: Date;
   exitAt: Date | null;
+  leftWithStudent?: boolean;
+  autoClosed: boolean;
   checkedInBy: Types.ObjectId;
   checkedOutBy?: Types.ObjectId;
   notes?: string;
@@ -51,15 +64,21 @@ const VisitSchema = new Schema<IVisit>(
     },
     purpose: {
       type: String,
-      enum: [
-        'student_pickup',
-        'parent_meeting',
-        'official_inspection',
-        'vendor_delivery',
-        'maintenance',
-        'other',
-      ],
+      enum: VISIT_PURPOSES,
       required: true,
+    },
+    purposeNote: {
+      type: String,
+      trim: true,
+    },
+    isApproved: {
+      type: Boolean,
+      required: true,
+      default: false,
+    },
+    unapprovedReason: {
+      type: String,
+      trim: true,
     },
     entryAt: {
       type: Date,
@@ -69,6 +88,15 @@ const VisitSchema = new Schema<IVisit>(
     exitAt: {
       type: Date,
       default: null,
+    },
+    leftWithStudent: {
+      type: Boolean,
+      default: false,
+    },
+    autoClosed: {
+      type: Boolean,
+      required: true,
+      default: false,
     },
     checkedInBy: {
       type: Schema.Types.ObjectId,
@@ -112,12 +140,15 @@ export async function recordVisit(input: {
   studentIds: Array<Types.ObjectId | string>;
   purpose: VisitPurpose;
   checkedInBy: Types.ObjectId | string;
+  isApproved?: boolean;
+  unapprovedReason?: string;
   entryAt?: Date;
   exitAt?: Date | null;
   notes?: string;
 }): Promise<IVisit> {
   return await Visit.create({
     ...input,
+    isApproved: input.isApproved ?? false,
     exitAt: input.exitAt ?? null,
   });
 }

@@ -1,10 +1,14 @@
 import mongoose, { Schema, type Document, type Model, type Types } from 'mongoose';
+import { GUARDIAN_RELATIONS, type GuardianRelation } from './GuardianLink';
 
 export interface IVisitor extends Document {
   schoolId: Types.ObjectId;
   name: string;
   phone: string;
   photoKey?: string;
+  defaultRelation?: GuardianRelation;
+  consentAt?: Date;
+  consentVersion?: string;
   idProofType?: 'aadhaar_last4' | 'voter_id' | 'driving_license' | 'other';
   idProofValue?: string;
   isBlocked: boolean;
@@ -30,6 +34,17 @@ const VisitorSchema = new Schema<IVisitor>(
       trim: true,
     },
     photoKey: {
+      type: String,
+      trim: true,
+    },
+    defaultRelation: {
+      type: String,
+      enum: GUARDIAN_RELATIONS,
+    },
+    consentAt: {
+      type: Date,
+    },
+    consentVersion: {
       type: String,
       trim: true,
     },

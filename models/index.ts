@@ -8,5 +8,14 @@ export {
   type IGuardianLink,
   type GuardianRelation,
 } from './GuardianLink';
-export { Visit, type IVisit, type VisitPurpose, isVisitInside, recordVisit } from './Visit';
+export {
+  Visit,
+  VISIT_PURPOSES,
+  type IVisit,
+  type VisitPurpose,
+  isVisitInside,
+  recordVisit,
+} from './Visit';
 export { AuditLog, type IAuditLog } from './AuditLog';
+export { RateLimit, type IRateLimit } from './RateLimit';
+export { OtpRequest, type IOtpRequest } from './OtpRequest';

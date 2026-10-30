@@ -91,6 +91,11 @@ export const guardianAddBodySchema = z.object({
 });
 
 export const visitPurposes = [
+  'Meet student',
+  'Pickup',
+  'PTM',
+  'Office work',
+  'Other',
   'student_pickup',
   'parent_meeting',
   'official_inspection',
@@ -98,6 +103,16 @@ export const visitPurposes = [
   'maintenance',
   'other',
 ] as const;
+
+export const gatePurposes = [
+  'Meet student',
+  'Pickup',
+  'PTM',
+  'Office work',
+  'Other',
+] as const;
+
+export type GatePurpose = (typeof gatePurposes)[number];
 
 export const visitInputSchema = z.object({
   schoolId: z.string().trim().min(1),
@@ -110,4 +125,55 @@ export const visitInputSchema = z.object({
   checkedInBy: z.string().trim().min(1),
   checkedOutBy: z.string().trim().min(1).optional(),
   notes: z.string().trim().optional(),
+});
+
+export const uploadSignBodySchema = z.object({
+  schoolId: z.string().trim().min(1),
+  contentType: z.enum(['image/jpeg', 'image/webp']),
+  contentLength: z
+    .number()
+    .int()
+    .min(1, 'File cannot be empty')
+    .max(1024 * 1024, 'File size exceeds 1 MB limit'),
+});
+
+export const otpSendBodySchema = z.object({
+  schoolId: z.string().trim().min(1),
+  phone: indianPhoneSchema,
+});
+
+export const otpVerifyBodySchema = z.object({
+  schoolId: z.string().trim().min(1),
+  phone: indianPhoneSchema,
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, 'OTP must be 6 digits'),
+});
+
+export const gateLookupQuerySchema = z.object({
+  schoolId: z.string().trim().min(1),
+  phone: indianPhoneSchema,
+});
+
+export const gateCreateVisitBodySchema = z.object({
+  schoolId: z.string().trim().min(1),
+  clientId: z.string().trim().min(1, 'clientId is required'),
+  phone: indianPhoneSchema,
+  name: z.string().trim().min(1, 'Visitor name is required'),
+  relation: z.enum(GUARDIAN_RELATIONS).optional(),
+  photoKey: z.string().trim().min(1).optional(),
+  consentAt: z.coerce.date().optional(),
+  consentVersion: z.string().trim().min(1).optional(),
+  studentIds: z
+    .array(objectIdSchema)
+    .min(1, 'At least one student must be selected'),
+  purpose: z.enum(gatePurposes),
+  purposeNote: z.string().trim().optional(),
+  unapprovedReason: z.string().trim().optional(),
+});
+
+export const gateExitVisitBodySchema = z.object({
+  schoolId: z.string().trim().min(1),
+  leftWithStudent: z.boolean().optional().default(false),
 });

@@ -75,6 +75,18 @@ export function handleApiError(error: unknown): NextResponse {
   if (error instanceof RbacError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: string }).name === 'OtpError' &&
+    'status' in error
+  ) {
+    return NextResponse.json(
+      { error: (error as unknown as Error).message },
+      { status: (error as { status: number }).status }
+    );
+  }
   if (error instanceof z.ZodError) {
     return NextResponse.json(
       { error: 'Validation failed', details: error.flatten() },
