@@ -43,17 +43,10 @@ export class InMemoryRateLimiter implements RateLimiter {
       };
     }
 
-    if (existing.count >= limit) {
-      return {
-        allowed: false,
-        remaining: 0,
-        resetAt: new Date(existing.resetAtMs),
-      };
-    }
-
     existing.count += 1;
+    const allowed = existing.count <= limit;
     return {
-      allowed: true,
+      allowed,
       remaining: Math.max(0, limit - existing.count),
       resetAt: new Date(existing.resetAtMs),
     };
@@ -79,43 +72,68 @@ export class MongoRateLimiter implements RateLimiter {
 
     const now = new Date(nowMs);
     const windowCutoff = new Date(nowMs - windowMs);
+    const newExpiresAt = new Date(nowMs + windowMs);
 
-    const existing = await RateLimit.findOne({ key });
-
-    if (!existing || existing.windowStart.getTime() <= windowCutoff.getTime()) {
-      await RateLimit.findOneAndUpdate(
-        { key },
+    // Atomic findOneAndUpdate with an aggregation pipeline update:
+    // Resets count=1, windowStart=now, expiresAt=newExpiresAt if window expired,
+    // otherwise increments count by 1 atomically.
+    const doc = await RateLimit.findOneAndUpdate(
+      { key },
+      [
         {
           $set: {
-            key,
-            count: 1,
-            windowStart: now,
+            key: { $ifNull: ['$key', key] },
+            count: {
+              $cond: {
+                if: {
+                  $or: [
+                    { $not: ['$windowStart'] },
+                    { $lte: ['$windowStart', windowCutoff] },
+                  ],
+                },
+                then: 1,
+                else: { $add: [{ $ifNull: ['$count', 0] }, 1] },
+              },
+            },
+            windowStart: {
+              $cond: {
+                if: {
+                  $or: [
+                    { $not: ['$windowStart'] },
+                    { $lte: ['$windowStart', windowCutoff] },
+                  ],
+                },
+                then: now,
+                else: '$windowStart',
+              },
+            },
+            expiresAt: {
+              $cond: {
+                if: {
+                  $or: [
+                    { $not: ['$windowStart'] },
+                    { $lte: ['$windowStart', windowCutoff] },
+                  ],
+                },
+                then: newExpiresAt,
+                else: { $ifNull: ['$expiresAt', newExpiresAt] },
+              },
+            },
           },
         },
-        { upsert: true, new: true }
-      );
-      return {
-        allowed: true,
-        remaining: Math.max(0, limit - 1),
-        resetAt: new Date(nowMs + windowMs),
-      };
-    }
+      ],
+      { upsert: true, new: true }
+    );
 
-    if (existing.count >= limit) {
-      return {
-        allowed: false,
-        remaining: 0,
-        resetAt: new Date(existing.windowStart.getTime() + windowMs),
-      };
-    }
-
-    existing.count += 1;
-    await existing.save();
+    const count = doc?.count ?? 1;
+    const allowed = count <= limit;
+    const remaining = Math.max(0, limit - count);
+    const resetAt = doc?.expiresAt ?? newExpiresAt;
 
     return {
-      allowed: true,
-      remaining: Math.max(0, limit - existing.count),
-      resetAt: new Date(existing.windowStart.getTime() + windowMs),
+      allowed,
+      remaining,
+      resetAt,
     };
   }
 
@@ -132,7 +150,8 @@ export class MongoRateLimiter implements RateLimiter {
 
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 export const LOGIN_MAX_PER_PHONE_IP = 5;
-export const LOGIN_MAX_PER_IP = 20;
+export const LOGIN_MAX_PER_IP = 100; // 100 / 15 min (carriers share IPs)
+export const LOGIN_MAX_PER_PHONE = 30; // 30 / 15 min per phone across all IPs
 
 export class RateLimitError extends Error {
   status = 429;
@@ -163,9 +182,10 @@ export async function consumeLoginAttempt(
   ip: string,
   nowMs: number = Date.now()
 ): Promise<void> {
-  const normalizedIp = ip.trim() || '127.0.0.1';
+  const normalizedIp = ip.trim() || 'unknown';
   const normalizedPhone = phone.trim();
 
+  // 1. 100 per IP / 15 min (carriers share IPs)
   const ipResult = await activeRateLimiter.consume(
     `login:ip:${normalizedIp}`,
     LOGIN_MAX_PER_IP,
@@ -176,6 +196,18 @@ export async function consumeLoginAttempt(
     throw new RateLimitError(ipResult.resetAt);
   }
 
+  // 2. 30 per phone across all IPs / 15 min
+  const phoneResult = await activeRateLimiter.consume(
+    `login:phone:${normalizedPhone}`,
+    LOGIN_MAX_PER_PHONE,
+    LOGIN_WINDOW_MS,
+    nowMs
+  );
+  if (!phoneResult.allowed) {
+    throw new RateLimitError(phoneResult.resetAt);
+  }
+
+  // 3. 5 per phone+IP / 15 min
   const phoneIpResult = await activeRateLimiter.consume(
     `login:phone_ip:${normalizedPhone}:${normalizedIp}`,
     LOGIN_MAX_PER_PHONE_IP,

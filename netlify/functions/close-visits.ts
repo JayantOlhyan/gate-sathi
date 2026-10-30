@@ -1,8 +1,8 @@
 import { runAutoCloseVisits } from '../../lib/close-visits';
 
-// Daily at 17:05 IST = 11:35 UTC
+// Hourly scheduled function
 export const config = {
-  schedule: '35 11 * * *',
+  schedule: '0 * * * *',
 };
 
 export default async function closeVisitsScheduledHandler() {

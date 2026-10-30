@@ -69,6 +69,7 @@ export default async function MarketingLandingPage() {
       ? 'GateSathi सरकारी स्कूलों के लिए एक मुफ़्त डिजिटल विज़िटर रजिस्टर है।'
       : 'GateSathi is a free digital visitor register for government schools.',
     requestPilotBtn: isHi ? 'पायलट रिक्वेस्ट करें' : 'Request a pilot',
+    illustrativeCaption: isHi ? 'चित्रात्मक छवि' : 'Illustrative image',
 
     // Floating hero card
     heroCardBadge: isHi ? 'स्वीकृत अभिभावक (Approved)' : 'Approved Guardian',
@@ -240,8 +241,8 @@ export default async function MarketingLandingPage() {
       : 'Privacy and Data Safety',
     privacyPoints: [
       isHi
-        ? 'पूरा डेटा भारत के सुरक्षित सर्वरों में स्टोर होता है।'
-        : 'Data is stored securely in India.',
+        ? 'डेटाबेस भारत (मुंबई) में होस्टेड है।'
+        : 'Database hosted in India (Mumbai).',
       isHi
         ? 'DPDP एक्ट 2023 और रूल्स 2025 के कड़े नियमों के अनुसार तैयार।'
         : 'Built for the DPDP Act 2023 and Rules 2025.',
@@ -249,8 +250,8 @@ export default async function MarketingLandingPage() {
         ? 'कोई आधार नंबर नहीं, कोई फ़ेशियल रिकग्निशन स्कैनिंग नहीं।'
         : 'No Aadhaar, no face recognition.',
       isHi
-        ? 'तय समय सीमा के बाद विज़िटर्स की फ़ोटो अपने आप डिलीट हो जाती हैं।'
-        : 'Photos auto-deleted after a fixed period.',
+        ? 'फ़ोटो पूरी तरह निजी रखी जाती हैं; केवल विद्यालय ही इन्हें देख सकता है।'
+        : 'Photos are stored privately; only the school can see them.',
       isHi
         ? 'पूरे डेटा का 100% मालिकाना हक़ सिर्फ़ विद्यालय के पास होता है।'
         : 'Data belongs to the school.',
@@ -371,19 +372,25 @@ export default async function MarketingLandingPage() {
 
             {/* Dimensional Visual Stack */}
             <div className="relative lg:col-span-6">
-              <div
-                data-sc-parallax="-0.25"
-                className="overflow-hidden rounded-2xl border-2 border-white bg-slate-900 shadow-xl"
-              >
-                <Image
-                  src="/story/01-school-gate-hero.jpg"
-                  alt="Indian government school guard welcoming parent and child at the school gate"
-                  width={1280}
-                  height={720}
-                  priority
-                  className="h-auto w-full object-cover"
-                />
-              </div>
+              <figure>
+                <div
+                  data-sc-parallax="-0.25"
+                  className="overflow-hidden rounded-2xl border-2 border-white bg-slate-900 shadow-xl"
+                >
+                  <Image
+                    src="/story/01-school-gate-hero.jpg"
+                    alt="Illustrative depiction of school gate visitor entry"
+                    width={1280}
+                    height={720}
+                    priority
+                    sizes="(max-width: 1024px) 100vw, 640px"
+                    className="h-auto w-full object-cover"
+                  />
+                </div>
+                <figcaption className="mt-1.5 text-center text-[10px] text-slate-500">
+                  {copy.illustrativeCaption}
+                </figcaption>
+              </figure>
 
               {/* Floating Gate Pass Verification Card */}
               <div
@@ -421,19 +428,26 @@ export default async function MarketingLandingPage() {
           <div className="mx-auto max-w-6xl px-4">
             <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-12">
               <div className="lg:col-span-5">
-                <div
-                  data-sc-reveal="up"
-                  data-sc-reveal-at="0.08 0.48"
-                  className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-md"
-                >
-                  <Image
-                    src="/story/02-paper-register-problem.jpg"
-                    alt="Worn paper visitor register book on a wooden desk at a school gate"
-                    width={1200}
-                    height={675}
-                    className="h-auto w-full object-cover"
-                  />
-                </div>
+                <figure>
+                  <div
+                    data-sc-reveal="up"
+                    data-sc-reveal-at="0.08 0.48"
+                    className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-md"
+                  >
+                    <Image
+                      src="/story/02-paper-register-problem.jpg"
+                      alt="Illustrative depiction of a worn paper visitor register"
+                      width={1200}
+                      height={675}
+                      loading="lazy"
+                      sizes="(max-width: 1024px) 100vw, 500px"
+                      className="h-auto w-full object-cover"
+                    />
+                  </div>
+                  <figcaption className="mt-1.5 text-center text-[10px] text-slate-500">
+                    {copy.illustrativeCaption}
+                  </figcaption>
+                </figure>
               </div>
 
               <div className="space-y-4 lg:col-span-7">
@@ -484,15 +498,22 @@ export default async function MarketingLandingPage() {
             <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-8 px-4 lg:grid-cols-12">
               {/* Left Column: Guard Verification Photograph + Bespoke Live Gate Pass */}
               <div className="space-y-4 lg:col-span-5">
-                <div className="overflow-hidden rounded-xl border border-white/20 bg-slate-900 shadow-lg">
-                  <Image
-                    src="/story/03-guard-phone-verification.jpg"
-                    alt="School security guard verifying parent and student on phone at gate"
-                    width={1200}
-                    height={675}
-                    className="h-44 w-full object-cover sm:h-52"
-                  />
-                </div>
+                <figure>
+                  <div className="overflow-hidden rounded-xl border border-white/20 bg-slate-900 shadow-lg">
+                    <Image
+                      src="/story/03-guard-phone-verification.jpg"
+                      alt="Illustrative depiction of mobile phone visitor verification"
+                      width={1200}
+                      height={675}
+                      loading="lazy"
+                      sizes="(max-width: 1024px) 100vw, 500px"
+                      className="h-44 w-full object-cover sm:h-52"
+                    />
+                  </div>
+                  <figcaption className="mt-1.5 text-center text-[10px] text-white/70">
+                    {copy.illustrativeCaption}
+                  </figcaption>
+                </figure>
 
                 {/* Bespoke Signature Move: Scroll-Driven Gate Pass */}
                 <div
@@ -674,18 +695,25 @@ export default async function MarketingLandingPage() {
               </div>
 
               <div className="lg:col-span-6">
-                <div
-                  data-sc-in
-                  className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-lg"
-                >
-                  <Image
-                    src="/story/04-principal-live-peace.jpg"
-                    alt="Government school principal viewing live campus status on her phone"
-                    width={1200}
-                    height={675}
-                    className="h-auto w-full object-cover"
-                  />
-                </div>
+                <figure>
+                  <div
+                    data-sc-in
+                    className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-lg"
+                  >
+                    <Image
+                      src="/story/04-principal-live-peace.jpg"
+                      alt="Illustrative depiction of school administrator viewing dashboard"
+                      width={1200}
+                      height={675}
+                      loading="lazy"
+                      sizes="(max-width: 1024px) 100vw, 600px"
+                      className="h-auto w-full object-cover"
+                    />
+                  </div>
+                  <figcaption className="mt-1.5 text-center text-[10px] text-slate-500">
+                    {copy.illustrativeCaption}
+                  </figcaption>
+                </figure>
               </div>
             </div>
           </div>

@@ -15,6 +15,9 @@ const withSerwist = withSerwistInit({
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  images: {
+    formats: ['image/avif', 'image/webp'],
+  },
 };
 
 export default withSerwist(withNextIntl(nextConfig));

@@ -57,7 +57,9 @@ const OtpRequestSchema = new Schema<IOtpRequest>(
   }
 );
 
-OtpRequestSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Retain OTP records for 24 hours so the 1-hour rate limit (max 3 sends/hour)
+// is accurately enforced across the full hour window.
+OtpRequestSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
 OtpRequestSchema.index({ schoolId: 1, phone: 1, createdAt: -1 });
 
 export const OtpRequest: Model<IOtpRequest> =

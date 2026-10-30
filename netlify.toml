@@ -6,4 +6,4 @@
   directory = "netlify/functions"
 
 [functions."close-visits"]
-  schedule = "35 11 * * *"
+  schedule = "0 * * * *"

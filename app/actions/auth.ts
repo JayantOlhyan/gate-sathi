@@ -1,17 +1,29 @@
 'use server';
 
-import { headers } from 'next/headers';
 import { signIn, signOut } from '@/auth';
-import {
-  authenticateWithPhoneAndPassword,
-  RateLimitError,
-} from '@/lib/auth-service';
+import { RateLimitError } from '@/lib/auth-service';
 import { loginSchema } from '@/lib/validations';
 
 export interface LoginActionResult {
   ok: boolean;
   errorCode?: 'validationError' | 'invalidCredentials' | 'lockedAccount';
   redirectTo?: string;
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (error instanceof RateLimitError) return true;
+  if (!error || typeof error !== 'object') return false;
+  const e = error as Record<string, unknown>;
+  if (e.name === 'RateLimitError') return true;
+  const cause = e.cause as Record<string, unknown> | undefined;
+  if (cause?.name === 'RateLimitError' || cause instanceof RateLimitError) {
+    return true;
+  }
+  const causeErr = cause?.err as Record<string, unknown> | undefined;
+  if (causeErr?.name === 'RateLimitError' || causeErr instanceof RateLimitError) {
+    return true;
+  }
+  return false;
 }
 
 export async function loginAction(rawInput: {
@@ -23,19 +35,8 @@ export async function loginAction(rawInput: {
     return { ok: false, errorCode: 'validationError' };
   }
 
-  const headerStore = await headers();
-  const forwardedFor = headerStore.get('x-forwarded-for');
-  const ip =
-    forwardedFor?.split(',')[0]?.trim() ||
-    headerStore.get('x-real-ip')?.trim() ||
-    '127.0.0.1';
-
   try {
-    const user = await authenticateWithPhoneAndPassword(parsed.data, { ip });
-    if (!user) {
-      return { ok: false, errorCode: 'invalidCredentials' };
-    }
-
+    // authorize() inside signIn is the sole place that rate-limits and checks the password
     await signIn('credentials', {
       phone: parsed.data.phone,
       password: parsed.data.password,
@@ -46,8 +47,8 @@ export async function loginAction(rawInput: {
       ok: true,
       redirectTo: '/app',
     };
-  } catch (error) {
-    if (error instanceof RateLimitError) {
+  } catch (error: unknown) {
+    if (isRateLimitError(error)) {
       return { ok: false, errorCode: 'lockedAccount' };
     }
     return { ok: false, errorCode: 'invalidCredentials' };

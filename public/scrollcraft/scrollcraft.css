@@ -262,10 +262,9 @@ video[data-sc-scrub] { opacity: 0; transition: opacity 380ms var(--sc-ease-out);
 .sc-copy--center { inset-inline: auto; left: 50%; top: 50%; translate: -50% -50%; text-align: center; }
 .sc-copy--trail  { inset-inline: auto; right: var(--sc-gutter); bottom: clamp(3rem, 12vh, 9rem); text-align: right; }
 
-/* cue defaults: the engine writes opacity/transform inline, these are the
-   pre-paint state so nothing flashes before the first read() */
-[data-sc-cue] { opacity: 0; will-change: opacity, transform; }
-.sc-ready [data-sc-cue] { transition: none; }
+/* No-JS safety: only hide cues when JS runtime has loaded and added .sc-js to html */
+html.sc-js [data-sc-cue] { opacity: 0; will-change: opacity, transform; }
+html.sc-js.sc-ready [data-sc-cue] { transition: none; }
 
 /* kinetic split */
 .sc-split { display: inline-block; overflow: hidden; vertical-align: top; }
@@ -357,12 +356,12 @@ video[data-sc-scrub].sc-has-clip { opacity: 1; }
   pointer-events: none;
 }
 .sc-world__scrim { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
-[data-sc-copy] {
+html.sc-js [data-sc-copy] {
   opacity: 0;
   pointer-events: none;
   will-change: opacity, transform;
 }
-.sc-ready [data-sc-copy] { transition: none; }
+html.sc-js.sc-ready [data-sc-copy] { transition: none; }
 
 /* The track. Empty on purpose. */
 .sc-world__spacer { pointer-events: none; }

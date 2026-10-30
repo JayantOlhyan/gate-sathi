@@ -4,6 +4,7 @@ export interface IRateLimit extends Document {
   key: string;
   count: number;
   windowStart: Date;
+  expiresAt: Date;
 }
 
 const RateLimitSchema = new Schema<IRateLimit>(
@@ -23,6 +24,10 @@ const RateLimitSchema = new Schema<IRateLimit>(
       required: true,
       default: Date.now,
     },
+    expiresAt: {
+      type: Date,
+      required: true,
+    },
   },
   {
     collection: 'rateLimits',
@@ -31,7 +36,7 @@ const RateLimitSchema = new Schema<IRateLimit>(
 );
 
 RateLimitSchema.index({ key: 1 }, { unique: true });
-RateLimitSchema.index({ windowStart: 1 }, { expireAfterSeconds: 900 });
+RateLimitSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export const RateLimit: Model<IRateLimit> =
   mongoose.models.RateLimit ||

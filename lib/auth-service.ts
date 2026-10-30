@@ -59,6 +59,7 @@ export async function authenticateWithPhoneAndPassword(
 
   if (!deps?.skipRateLimit) {
     await getRateLimiter().reset(`login:phone_ip:${phone}:${ip}`);
+    await getRateLimiter().reset(`login:phone:${phone}`);
   }
 
   return {

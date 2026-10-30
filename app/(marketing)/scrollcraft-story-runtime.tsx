@@ -33,6 +33,7 @@ export function ScrollCraftStoryRuntime() {
     const folioEl = document.querySelector<HTMLElement>('[data-story-folio]');
 
     const tryMount = () => {
+      document.documentElement.classList.add('sc-js');
       if (window.ScrollCraft && rootEl && !instance) {
         instance = window.ScrollCraft.mount(rootEl);
       }
@@ -121,8 +122,9 @@ export function ScrollCraftStoryRuntime() {
   return (
     <Script
       src="/scrollcraft/scrollcraft.js"
-      strategy="afterInteractive"
+      strategy="lazyOnload"
       onLoad={() => {
+        document.documentElement.classList.add('sc-js');
         const rootEl = document.getElementById('gatesathi-story-root');
         if (window.ScrollCraft && rootEl) {
           window.ScrollCraft.mount(rootEl);

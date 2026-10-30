@@ -2,6 +2,7 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { authConfig } from './auth.config';
 import { authenticateWithPhoneAndPassword } from '@/lib/auth-service';
+import { getClientIp } from '@/lib/client-ip';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
@@ -13,13 +14,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials, request) {
-        try {
-          const forwardedFor = request?.headers?.get('x-forwarded-for');
-          const ip = forwardedFor?.split(',')[0]?.trim() || '127.0.0.1';
-          return await authenticateWithPhoneAndPassword(credentials, { ip });
-        } catch {
-          return null;
-        }
+        const ip = getClientIp(request?.headers);
+        return await authenticateWithPhoneAndPassword(credentials, { ip });
       },
     }),
   ],

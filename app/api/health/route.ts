@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import mongoose from 'mongoose';
+import { getClientIp } from '@/lib/client-ip';
 import { connectDB } from '@/lib/db';
 import { checkR2Health } from '@/lib/r2';
 import { isMockOtpActive } from '@/lib/otp';
@@ -12,19 +13,8 @@ import {
 const HEALTH_RATE_LIMIT_MAX = 30;
 const fallbackHealthLimiter = new InMemoryRateLimiter();
 
-function extractClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) {
-    const firstIp = forwarded.split(',')[0]?.trim();
-    if (firstIp) return firstIp;
-  }
-  const realIp = req.headers.get('x-real-ip')?.trim();
-  if (realIp) return realIp;
-  return '127.0.0.1';
-}
-
 export async function GET(req: NextRequest) {
-  const ip = extractClientIp(req);
+  const ip = getClientIp(req.headers);
   let rateAllowed = true;
   try {
     const limiter = getRateLimiter();

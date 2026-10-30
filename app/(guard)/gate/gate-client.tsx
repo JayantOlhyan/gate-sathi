@@ -15,7 +15,7 @@ import {
 } from '@/models/Visit';
 import { gatePurposes, type GatePurpose } from '@/lib/validations';
 
-const CONSENT_VERSION = 'v1.0';
+const CONSENT_VERSION = 'v1.1';
 
 interface LinkedStudentItem {
   studentId: string;

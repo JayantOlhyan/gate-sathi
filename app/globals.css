@@ -59,7 +59,16 @@ body {
   z-index: 1;
 }
 
-.sc-ready #gatesathi-story-root [data-sc-cue] {
+/* No-JS & Slow-JS safety: all content fully visible without JavaScript */
+html:not(.sc-js) #gatesathi-story-root [data-sc-cue],
+html:not(.sc-js) #gatesathi-story-root [data-sc-copy],
+html:not(.sc-js) #gatesathi-story-root [data-sc-in],
+html:not(.sc-js) #gatesathi-story-root [data-sc-stagger] > * {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+html.sc-js.sc-ready #gatesathi-story-root [data-sc-cue] {
   will-change: opacity, transform;
 }
 
@@ -76,16 +85,16 @@ body {
   will-change: transform;
 }
 
-.sc-ready #gatesathi-story-root [data-sc-in],
-.sc-ready #gatesathi-story-root [data-sc-stagger] > * {
+html.sc-js.sc-ready #gatesathi-story-root [data-sc-in],
+html.sc-js.sc-ready #gatesathi-story-root [data-sc-stagger] > * {
   opacity: 0;
   transform: translate3d(0, 14px, 0);
   transition: opacity 620ms var(--sc-ease-out),
     transform 620ms var(--sc-ease-out);
 }
 
-.sc-ready #gatesathi-story-root [data-sc-in].sc-in,
-.sc-ready #gatesathi-story-root [data-sc-stagger] > .sc-in {
+html.sc-js.sc-ready #gatesathi-story-root [data-sc-in].sc-in,
+html.sc-js.sc-ready #gatesathi-story-root [data-sc-stagger] > .sc-in {
   opacity: 1;
   transform: none;
 }
@@ -109,14 +118,18 @@ body {
   background-color: rgba(245, 158, 11, 0.14);
 }
 
+/* Reduced motion: show everything statically without transforms or wipes */
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
   #gatesathi-story-root [data-sc-in],
-  #gatesathi-story-root [data-sc-stagger] > * {
+  #gatesathi-story-root [data-sc-stagger] > *,
+  #gatesathi-story-root [data-sc-cue],
+  #gatesathi-story-root [data-sc-copy] {
     opacity: 1 !important;
     transform: none !important;
+    transition: none !important;
   }
   #gatesathi-story-root [data-sc-parallax],
   #gatesathi-story-root [data-sc-pan] {

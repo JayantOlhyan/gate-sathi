@@ -18,18 +18,27 @@ declare global {
 
 declare const self: ServiceWorkerGlobalScope;
 
+const AUTH_AND_APP_PAGE_REGEX =
+  /^\/(gate|dashboard|students|admin|app|login)(\/|$)/;
+
 const runtimeCaching: RuntimeCaching[] = [
-  // Network-only for all /api routes (no caching of API responses)
+  // 1. NetworkOnly for all /api routes
   {
     matcher: ({ url: { pathname } }) => pathname.startsWith('/api/'),
     handler: new NetworkOnly(),
   },
-  // Network-only for cross-origin requests (never cache signed R2 visitor photos)
+  // 2. NetworkOnly for cross-origin requests (e.g. signed R2 photos)
   {
     matcher: ({ sameOrigin }) => !sameOrigin,
     handler: new NetworkOnly(),
   },
-  // Static Next.js JS/CSS bundles
+  // 3. NetworkOnly for HTML/RSC of authenticated & app routes: /gate, /dashboard, /students, /admin, /app, /login
+  {
+    matcher: ({ sameOrigin, url: { pathname } }) =>
+      sameOrigin && AUTH_AND_APP_PAGE_REGEX.test(pathname),
+    handler: new NetworkOnly(),
+  },
+  // 4. Cache static Next.js JS/CSS bundles
   {
     matcher: ({ sameOrigin, url: { pathname } }) =>
       sameOrigin && pathname.startsWith('/_next/static/'),
@@ -43,32 +52,35 @@ const runtimeCaching: RuntimeCaching[] = [
       ],
     }),
   },
-  // Same-origin brand & app icon assets only (not visitor photos)
+  // 5. Cache static marketing, brand, icons, story & scrollcraft assets
   {
     matcher: ({ sameOrigin, url: { pathname } }) =>
       sameOrigin &&
-      (pathname.startsWith('/brand/') || pathname.startsWith('/icons/')),
+      (pathname.startsWith('/brand/') ||
+        pathname.startsWith('/icons/') ||
+        pathname.startsWith('/story/') ||
+        pathname.startsWith('/scrollcraft/')),
     handler: new StaleWhileRevalidate({
-      cacheName: 'brand-static-assets',
+      cacheName: 'static-media-assets',
       plugins: [
         new ExpirationPlugin({
-          maxEntries: 32,
+          maxEntries: 64,
           maxAgeSeconds: 30 * 24 * 60 * 60,
         }),
       ],
     }),
   },
-  // Same-origin app shell & pages
+  // 6. Cache only the public landing page (/)
   {
     matcher: ({ sameOrigin, url: { pathname } }) =>
-      sameOrigin && !pathname.startsWith('/api/'),
+      sameOrigin && pathname === '/',
     handler: new NetworkFirst({
-      cacheName: 'app-shell-pages',
-      networkTimeoutSeconds: 5,
+      cacheName: 'landing-page-cache',
+      networkTimeoutSeconds: 4,
       plugins: [
         new ExpirationPlugin({
-          maxEntries: 32,
-          maxAgeSeconds: 24 * 60 * 60,
+          maxEntries: 4,
+          maxAgeSeconds: 7 * 24 * 60 * 60,
         }),
       ],
     }),

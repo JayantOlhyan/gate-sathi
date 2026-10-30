@@ -2,18 +2,27 @@ import { connectDB } from '@/lib/db';
 import { School } from '@/models/School';
 import { Visit } from '@/models/Visit';
 
-function parseHhMmToMinutes(hhmm: string): number {
-  const [hStr, mStr] = hhmm.split(':');
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // +5 hours 30 minutes
+
+function parseClosingHour(closingHourIst?: string): { hour: number; minute: number } {
+  if (!closingHourIst) return { hour: 17, minute: 0 };
+  const [hStr, mStr] = closingHourIst.split(':');
   const h = Number(hStr ?? 17);
   const m = Number(mStr ?? 0);
-  if (Number.isNaN(h) || Number.isNaN(m)) return 17 * 60;
-  return h * 60 + m;
+  if (Number.isNaN(h) || Number.isNaN(m)) return { hour: 17, minute: 0 };
+  return { hour: h, minute: m };
 }
 
-function getCurrentIstMinutes(now: Date): number {
-  // IST is UTC + 5:30 (+330 minutes)
-  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-  return (utcMinutes + 330) % (24 * 60);
+export function getClosingTimeForEntryDay(entryAt: Date, closingHourIst?: string): Date {
+  const { hour, minute } = parseClosingHour(closingHourIst);
+  // Convert entryAt to IST calendar date (year, month, day)
+  const entryIst = new Date(entryAt.getTime() + IST_OFFSET_MS);
+  const y = entryIst.getUTCFullYear();
+  const m = entryIst.getUTCMonth();
+  const d = entryIst.getUTCDate();
+
+  // Closing time on that ENTRY day in IST converted back to UTC
+  return new Date(Date.UTC(y, m, d, hour - 5, minute - 30, 0, 0));
 }
 
 export async function runAutoCloseVisits(now: Date = new Date()): Promise<{
@@ -25,34 +34,34 @@ export async function runAutoCloseVisits(now: Date = new Date()): Promise<{
     .select('_id closingHourIst')
     .lean();
 
-  const currentIstMins = getCurrentIstMinutes(now);
-  const startOfToday = new Date(now);
-  startOfToday.setUTCHours(0, 0, 0, 0);
-
   let closedCount = 0;
 
   for (const school of schools) {
-    const closingMins = parseHhMmToMinutes(school.closingHourIst || '17:00');
-    const isPastClosingToday = currentIstMins >= closingMins;
-
-    const filter: Record<string, unknown> = {
+    const openVisits = await Visit.find({
       schoolId: school._id,
       exitAt: null,
-    };
+    }).select('_id entryAt');
 
-    if (!isPastClosingToday) {
-      // Before today's closing hour, only auto-close leftover open visits from previous days
-      filter.entryAt = { $lt: startOfToday };
+    for (const visit of openVisits) {
+      const closingTimeOnEntryDay = getClosingTimeForEntryDay(
+        visit.entryAt,
+        school.closingHourIst
+      );
+
+      // Close open visits whose entry day (IST) has passed that school's closingHourIst
+      if (now.getTime() >= closingTimeOnEntryDay.getTime()) {
+        const updateRes = await Visit.updateOne(
+          { _id: visit._id, exitAt: null },
+          {
+            $set: {
+              exitAt: closingTimeOnEntryDay,
+              autoClosed: true,
+            },
+          }
+        );
+        closedCount += updateRes.modifiedCount ?? 0;
+      }
     }
-
-    const result = await Visit.updateMany(filter, {
-      $set: {
-        exitAt: now,
-        autoClosed: true,
-      },
-    });
-
-    closedCount += result.modifiedCount ?? 0;
   }
 
   return { closedCount };

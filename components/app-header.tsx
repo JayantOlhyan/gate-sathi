@@ -2,8 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { getTranslations } from 'next-intl/server';
 import { LanguageToggle } from '@/components/language-toggle';
-import { logoutAction } from '@/app/actions/auth';
-import { Button } from '@/components/ui/button';
+import { LogoutButton } from '@/components/logout-button';
 
 export async function AppHeader({
   showLogout = false,
@@ -28,18 +27,7 @@ export async function AppHeader({
       </Link>
       <div className="flex items-center gap-1.5">
         <LanguageToggle onBrandBlue />
-        {showLogout && (
-          <form action={logoutAction}>
-            <Button
-              type="submit"
-              variant="ghost"
-              size="sm"
-              className="h-8 border border-white/40 bg-transparent px-2.5 text-xs font-medium text-white hover:bg-white/15 hover:text-white"
-            >
-              {t('logout')}
-            </Button>
-          </form>
-        )}
+        {showLogout && <LogoutButton label={t('logout')} />}
       </div>
     </header>
   );

@@ -14,12 +14,16 @@ import bcrypt from 'bcryptjs';
 import * as XLSX from 'xlsx';
 
 const mockAuth = vi.fn();
+const mockSignIn = vi.fn();
+const mockSignOut = vi.fn();
 const mockRedirect = vi.fn((url: string) => {
   throw new Error(`NEXT_REDIRECT:${url}`);
 });
 
 vi.mock('@/auth', () => ({
   auth: () => mockAuth(),
+  signIn: (...args: unknown[]) => mockSignIn(...args),
+  signOut: (...args: unknown[]) => mockSignOut(...args),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -70,6 +74,12 @@ import closeVisitsScheduledHandler, {
   config as closeVisitsScheduleConfig,
 } from '@/netlify/functions/close-visits';
 import { setHeadObjectInspector } from '@/lib/r2';
+import { loginAction } from '@/app/actions/auth';
+import { getClientIp } from '@/lib/client-ip';
+import {
+  runAutoCloseVisits,
+  getClosingTimeForEntryDay,
+} from '@/lib/close-visits';
 import {
   authenticateWithPhoneAndPassword,
   RateLimitError,
@@ -844,6 +854,49 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     );
     expect(validUser).not.toBeNull();
     expect(validUser?.phone).toBe('9999999992');
+
+    // C. Login Action counts each attempt once: loginAction delegates exclusively to signIn
+    mockSignIn.mockClear();
+    mockSignIn.mockResolvedValueOnce({ ok: true });
+    const actionResult = await loginAction({
+      phone: '9999999992',
+      password: 'Correct@123',
+    });
+    expect(actionResult).toEqual({ ok: true, redirectTo: '/app' });
+    expect(mockSignIn).toHaveBeenCalledTimes(1);
+
+    // When authorize/signIn throws RateLimitError, loginAction maps it to 'lockedAccount'
+    mockSignIn.mockRejectedValueOnce(new RateLimitError(new Date()));
+    const lockedResult = await loginAction({
+      phone: '9999999992',
+      password: 'Correct@123',
+    });
+    expect(lockedResult).toEqual({ ok: false, errorCode: 'lockedAccount' });
+
+    // Spoofed x-forwarded-for cannot reset limits when x-nf-client-connection-ip is present
+    const spoofedHeaders = new Headers({
+      'x-nf-client-connection-ip': '203.0.113.77',
+      'x-forwarded-for': '198.51.100.1, 198.51.100.2',
+    });
+    expect(getClientIp(spoofedHeaders)).toBe('203.0.113.77');
+
+    const multiProxyHeaders = new Headers({
+      'x-forwarded-for': 'client.spoof, 198.51.100.99',
+    });
+    expect(getClientIp(multiProxyHeaders)).toBe('198.51.100.99');
+
+    // D. Rate limiter: 20 concurrent consume() with limit 5 -> exactly 5 allowed
+    const mongoLimiter = new MongoRateLimiter();
+    const concurrentKey = `test:concurrent:${Date.now()}`;
+    const concurrentResults = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        mongoLimiter.consume(concurrentKey, 5, 60_000)
+      )
+    );
+    const allowedTotal = concurrentResults.filter((r) => r.allowed).length;
+    const deniedTotal = concurrentResults.filter((r) => !r.allowed).length;
+    expect(allowedTotal).toBe(5);
+    expect(deniedTotal).toBe(15);
   });
 
   it('returns 409 when adding a guardian with an existing phone and different name, and resolves via use_existing or update_name with audit log', async () => {
@@ -1177,6 +1230,61 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       })
     );
     expect(fourthSendRes.status).toBe(429);
+
+    // B. Test: 3 sends, +10 min, 4th rejected; +61 min allowed
+    const phoneB = '9812345679';
+    await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone: phoneB,
+      nowMs: t0,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'mock',
+      allowMockOtp: 'true',
+    });
+    await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone: phoneB,
+      nowMs: t0 + 60_000,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'mock',
+      allowMockOtp: 'true',
+    });
+    await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone: phoneB,
+      nowMs: t0 + 120_000,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'mock',
+      allowMockOtp: 'true',
+    });
+
+    // At +10 min (past 5-min OTP expiry, but within 1h window), 4th send is rejected
+    await expect(
+      sendOtpForVisitor({
+        schoolId: schoolA._id,
+        phone: phoneB,
+        nowMs: t0 + 10 * 60 * 1000,
+        provider: captureProvider,
+        nodeEnv: 'development',
+        otpMode: 'mock',
+        allowMockOtp: 'true',
+      })
+    ).rejects.toMatchObject({ status: 429 });
+
+    // At +61 min, 1h window has elapsed -> send allowed
+    const sendAfter61m = await sendOtpForVisitor({
+      schoolId: schoolA._id,
+      phone: phoneB,
+      nowMs: t0 + 61 * 60 * 1000,
+      provider: captureProvider,
+      nodeEnv: 'development',
+      otpMode: 'mock',
+      allowMockOtp: 'true',
+    });
+    expect(sendAfter61m.expiresAt).toBeInstanceOf(Date);
 
     // 3. Max 5 verify attempts, then 6th attempt rejected even with valid code
     for (let attempt = 1; attempt <= 5; attempt++) {
@@ -1637,6 +1745,67 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     expect(r1.allowed).toBe(true);
     expect(r2.allowed).toBe(true);
     expect(r3.allowed).toBe(false);
+
+    // F. Auto-close: 17:30 entry with 18:30 closing closes at 18:30 same day; overnight-open visit gets previous day's closing time
+    const schoolLate = await School.create({
+      schoolId: 'SCH-LATE',
+      name: 'School Late Close',
+      udiseCode: '09150100109',
+      district: 'Lucknow',
+      state: 'Uttar Pradesh',
+      closingHourIst: '18:30',
+      isActive: true,
+    });
+    const schoolStandard = await School.create({
+      schoolId: 'SCH-STD',
+      name: 'School Standard Close',
+      udiseCode: '09150100110',
+      district: 'Kanpur',
+      state: 'Uttar Pradesh',
+      closingHourIst: '17:00',
+      isActive: true,
+    });
+
+    const visitOct30_1730 = await Visit.create({
+      schoolId: schoolLate._id,
+      clientId: 'visit-oct30-1730',
+      visitorId: visitor._id,
+      studentIds: [student._id],
+      purpose: 'Pickup',
+      isApproved: true,
+      entryAt: new Date(Date.UTC(2026, 9, 30, 12, 0, 0)), // 17:30 IST
+      exitAt: null,
+      checkedInBy: guardAId,
+    });
+
+    const visitOct29_1400 = await Visit.create({
+      schoolId: schoolStandard._id,
+      clientId: 'visit-oct29-1400',
+      visitorId: visitor._id,
+      studentIds: [student._id],
+      purpose: 'Meet student',
+      isApproved: true,
+      entryAt: new Date(Date.UTC(2026, 9, 29, 8, 30, 0)), // 14:00 IST on Oct 29
+      exitAt: null,
+      checkedInBy: guardAId,
+    });
+
+    // Cron runs at 19:00 IST on Oct 30 (= 13:30 UTC)
+    const cronNow = new Date(Date.UTC(2026, 9, 30, 13, 30, 0));
+    await runAutoCloseVisits(cronNow);
+
+    const visitAAfter = await Visit.findById(visitOct30_1730._id).lean();
+    const visitBAfter = await Visit.findById(visitOct29_1400._id).lean();
+
+    expect(visitAAfter?.autoClosed).toBe(true);
+    expect(visitAAfter?.exitAt?.toISOString()).toBe(
+      new Date(Date.UTC(2026, 9, 30, 13, 0, 0)).toISOString()
+    );
+
+    expect(visitBAfter?.autoClosed).toBe(true);
+    expect(visitBAfter?.exitAt?.toISOString()).toBe(
+      new Date(Date.UTC(2026, 9, 29, 11, 30, 0)).toISOString()
+    );
   });
 
   it('bulk imports students with guardian columns (including siblings sharing a parent phone and conflict counting without overwriting)', async () => {
@@ -1867,8 +2036,8 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     );
     expect(validPhotoVisitRes.status).toBe(201);
 
-    // 6. Verify Netlify Scheduled Function schedule is 17:05 IST (11:35 UTC = '35 11 * * *') and handler works
-    expect(closeVisitsScheduleConfig.schedule).toBe('35 11 * * *');
+    // 6. Verify Netlify Scheduled Function schedule is hourly ('0 * * * *') and handler works
+    expect(closeVisitsScheduleConfig.schedule).toBe('0 * * * *');
     const scheduledRes = await closeVisitsScheduledHandler();
     expect(scheduledRes.status).toBe(200);
   });
@@ -1969,6 +2138,47 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     );
     expect(honeypotRes.status).toBe(200);
     expect(await Lead.countDocuments({})).toBe(1);
+
+    // G. Validate body before touching DB: missing required fields -> 400 without creating lead
+    const invalidBodyRes = await createLeadRoute(
+      new NextRequest('http://localhost:3000/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: '',
+          schoolName: '',
+          role: '',
+          phone: '123', // invalid phone
+        }),
+      })
+    );
+    expect(invalidBodyRes.status).toBe(400);
+    expect(await Lead.countDocuments({})).toBe(1);
+
+    // When rate limiter / DB fails, leads endpoint returns 503 (not 500)
+    const spyLimiter = vi
+      .spyOn(MongoRateLimiter.prototype, 'consume')
+      .mockRejectedValueOnce(new Error('MongoDB connection timeout'));
+    const dbDownRes = await createLeadRoute(
+      new NextRequest('http://localhost:3000/api/leads', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-forwarded-for': '203.0.113.99',
+        },
+        body: JSON.stringify({
+          name: 'Valid Name',
+          schoolName: 'Valid School',
+          role: 'Principal',
+          phone: '9876543210',
+          message: 'Hello',
+        }),
+      })
+    );
+    expect(dbDownRes.status).toBe(503);
+    const dbDownJson = await dbDownRes.json();
+    expect(dbDownJson.error).toContain('Service temporarily unavailable');
+    spyLimiter.mockRestore();
 
     // 3. Rate limit: 5 submissions from same IP in an hour succeed; 6th returns 429
     const testIp = '203.0.113.55';
