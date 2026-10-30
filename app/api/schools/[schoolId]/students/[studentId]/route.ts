@@ -41,7 +41,7 @@ export async function GET(
       studentId: new Types.ObjectId(studentId),
       approved: true,
     })
-      .populate('visitorId', 'name phone photoUrl')
+      .populate('visitorId', 'name phone photoKey')
       .lean();
 
     const guardians = guardianLinks.map((link) => {
@@ -49,7 +49,7 @@ export async function GET(
         _id?: Types.ObjectId;
         name?: string;
         phone?: string;
-        photoUrl?: string;
+        photoKey?: string;
       } | null;
 
       return {
@@ -57,7 +57,7 @@ export async function GET(
         visitorId: visitor?._id ? String(visitor._id) : '',
         name: visitor?.name ?? '',
         phone: visitor?.phone ?? '',
-        photoUrl: visitor?.photoUrl ?? null,
+        photoKey: visitor?.photoKey ?? null,
         relation: link.relation,
         approved: link.approved,
         approvedAt: link.approvedAt,

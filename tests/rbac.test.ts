@@ -796,6 +796,233 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
     expect(validUser?.phone).toBe('9999999992');
   });
 
+  it('returns 409 when adding a guardian with an existing phone and different name, and resolves via use_existing or update_name with audit log', async () => {
+    const { schoolA, principalAId } = await seedTwoSchools();
+
+    const sibling1 = await Student.create({
+      schoolId: schoolA._id,
+      admissionNo: 'ADM-S1',
+      name: 'Aarav Kumar',
+      className: '5',
+      section: 'A',
+    });
+    const sibling2 = await Student.create({
+      schoolId: schoolA._id,
+      admissionNo: 'ADM-S2',
+      name: 'Ananya Kumar',
+      className: '7',
+      section: 'B',
+    });
+
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(principalAId),
+        name: 'Principal A',
+        phone: '9999999991',
+        role: 'principal',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+
+    // Step 1: Add Rakesh Kumar (9876543210) as Father of sibling1
+    const res1 = await addGuardianRoute(
+      new NextRequest(
+        `http://localhost:3000/api/schools/${String(schoolA._id)}/students/${String(sibling1._id)}/guardians`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Rakesh Kumar',
+            phone: '9876543210',
+            relation: 'Father',
+          }),
+        }
+      ),
+      {
+        params: Promise.resolve({
+          schoolId: String(schoolA._id),
+          studentId: String(sibling1._id),
+        }),
+      }
+    );
+    expect(res1.status).toBe(201);
+
+    // Step 2: Add same phone (9876543210) with a different name ("Mukesh Kumar") for sibling2 -> 409 Conflict
+    const resConflict = await addGuardianRoute(
+      new NextRequest(
+        `http://localhost:3000/api/schools/${String(schoolA._id)}/students/${String(sibling2._id)}/guardians`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Mukesh Kumar',
+            phone: '9876543210',
+            relation: 'Uncle',
+          }),
+        }
+      ),
+      {
+        params: Promise.resolve({
+          schoolId: String(schoolA._id),
+          studentId: String(sibling2._id),
+        }),
+      }
+    );
+    expect(resConflict.status).toBe(409);
+    const conflictBody = await resConflict.json();
+    expect(conflictBody.existingVisitor.name).toBe('Rakesh Kumar');
+    expect(conflictBody.existingVisitor.relations).toEqual(['Father']);
+    expect(conflictBody.existingVisitor.linkedStudents).toHaveLength(1);
+    expect(conflictBody.existingVisitor.linkedStudents[0].admissionNo).toBe(
+      'ADM-S1'
+    );
+
+    // Visitor name in DB must NOT be overwritten
+    const visitorStillRakesh = await Visitor.findOne({
+      schoolId: schoolA._id,
+      phone: '9876543210',
+    }).lean();
+    expect(visitorStillRakesh?.name).toBe('Rakesh Kumar');
+
+    // Step 3: Explicit choice "use_existing" links sibling2 without changing visitor name
+    const resUseExisting = await addGuardianRoute(
+      new NextRequest(
+        `http://localhost:3000/api/schools/${String(schoolA._id)}/students/${String(sibling2._id)}/guardians`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Mukesh Kumar',
+            phone: '9876543210',
+            relation: 'Father',
+            conflictResolution: 'use_existing',
+          }),
+        }
+      ),
+      {
+        params: Promise.resolve({
+          schoolId: String(schoolA._id),
+          studentId: String(sibling2._id),
+        }),
+      }
+    );
+    expect(resUseExisting.status).toBe(201);
+    const useExistingBody = await resUseExisting.json();
+    expect(useExistingBody.guardian.name).toBe('Rakesh Kumar');
+
+    // Step 4: Explicit choice "update_name" updates visitor name and writes visitor.rename AuditLog
+    const resUpdateName = await addGuardianRoute(
+      new NextRequest(
+        `http://localhost:3000/api/schools/${String(schoolA._id)}/students/${String(sibling2._id)}/guardians`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Rakesh Kumar Verma',
+            phone: '9876543210',
+            relation: 'Father',
+            conflictResolution: 'update_name',
+          }),
+        }
+      ),
+      {
+        params: Promise.resolve({
+          schoolId: String(schoolA._id),
+          studentId: String(sibling2._id),
+        }),
+      }
+    );
+    expect(resUpdateName.status).toBe(201);
+    const updateNameBody = await resUpdateName.json();
+    expect(updateNameBody.guardian.name).toBe('Rakesh Kumar Verma');
+
+    const renameAudit = await AuditLog.findOne({
+      schoolId: schoolA._id,
+      action: 'visitor.rename',
+    }).lean();
+    expect(renameAudit).not.toBeNull();
+    expect(renameAudit?.metadata).toMatchObject({
+      previousName: 'Rakesh Kumar',
+      newName: 'Rakesh Kumar Verma',
+      phone: '9876543210',
+    });
+  });
+
+  it('imports 5,000 rows in chunks of 500 via bulkWrite in under 10 seconds', async () => {
+    const { schoolA, principalAId } = await seedTwoSchools();
+
+    mockAuth.mockResolvedValue({
+      user: {
+        id: String(principalAId),
+        name: 'Principal A',
+        phone: '9999999991',
+        role: 'principal',
+        schoolIds: [String(schoolA._id)],
+        tokenVersion: 0,
+      },
+    });
+
+    // Pre-insert 100 existing students to verify mixed created (4,900) + updated (100)
+    const preExistingOps = Array.from({ length: 100 }, (_, i) => ({
+      insertOne: {
+        document: {
+          schoolId: schoolA._id,
+          admissionNo: `ADM-5K-${String(i + 1).padStart(4, '0')}`,
+          name: `Old Student ${i + 1}`,
+          className: '4',
+          section: 'A',
+          rollNumber: String(i + 1),
+          isActive: true,
+        },
+      },
+    }));
+    await Student.bulkWrite(preExistingOps);
+
+    const lines = ['admissionNo,name,className,section,rollNumber'];
+    for (let i = 1; i <= 5000; i++) {
+      const admNo = `ADM-5K-${String(i).padStart(4, '0')}`;
+      const cls = String((i % 10) + 1);
+      const sec = i % 2 === 0 ? 'A' : 'B';
+      lines.push(`${admNo},Student ${i},${cls},${sec},${i}`);
+    }
+    const csv5000 = lines.join('\n');
+
+    const fd = new FormData();
+    fd.append(
+      'file',
+      new File([csv5000], 'students-5000.csv', { type: 'text/csv' })
+    );
+    fd.append('mode', 'commit');
+
+    const startMs = performance.now();
+    const res = await importStudentsRoute(
+      new NextRequest(
+        `http://localhost:3000/api/schools/${String(schoolA._id)}/students/import`,
+        {
+          method: 'POST',
+          body: fd,
+        }
+      ),
+      { params: Promise.resolve({ schoolId: String(schoolA._id) }) }
+    );
+    const elapsedMs = performance.now() - startMs;
+
+    console.log(
+      `[5,000-row import benchmark] Completed in ${elapsedMs.toFixed(1)} ms`
+    );
+
+    expect(res.status).toBe(200);
+    expect(elapsedMs).toBeLessThan(10_000);
+
+    const report = await res.json();
+    expect(report.total).toBe(5000);
+    expect(report.created).toBe(4900);
+    expect(report.updated).toBe(100);
+    expect(report.failed).toBe(0);
+    expect(await Student.countDocuments({ schoolId: schoolA._id })).toBe(5000);
+  });
+
   it('refuses to run the seed script when NODE_ENV=production', () => {
     expect(() => assertNotProduction('production')).toThrow(
       /NODE_ENV=production/

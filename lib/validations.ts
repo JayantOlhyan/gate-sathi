@@ -87,6 +87,7 @@ export const guardianAddBodySchema = z.object({
   phone: indianPhoneSchema,
   name: z.string().trim().min(1, 'Guardian name is required'),
   relation: z.enum(GUARDIAN_RELATIONS),
+  conflictResolution: z.enum(['use_existing', 'update_name']).optional(),
 });
 
 export const visitPurposes = [

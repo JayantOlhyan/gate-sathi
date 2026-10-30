@@ -4,7 +4,7 @@ export interface IVisitor extends Document {
   schoolId: Types.ObjectId;
   name: string;
   phone: string;
-  photoUrl?: string;
+  photoKey?: string;
   idProofType?: 'aadhaar_last4' | 'voter_id' | 'driving_license' | 'other';
   idProofValue?: string;
   isBlocked: boolean;
@@ -29,8 +29,9 @@ const VisitorSchema = new Schema<IVisitor>(
       required: true,
       trim: true,
     },
-    photoUrl: {
+    photoKey: {
       type: String,
+      trim: true,
     },
     idProofType: {
       type: String,

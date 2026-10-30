@@ -15,9 +15,24 @@ interface GuardianItem {
   visitorId: string;
   name: string;
   phone: string;
-  photoUrl: string | null;
+  photoKey: string | null;
   relation: GuardianRelation;
   approved: boolean;
+}
+
+interface ExistingVisitorConflict {
+  visitorId: string;
+  name: string;
+  phone: string;
+  relations: GuardianRelation[];
+  linkedStudents: Array<{
+    studentId: string;
+    name: string;
+    admissionNo: string;
+    className: string;
+    section: string;
+    relation: GuardianRelation;
+  }>;
 }
 
 export function StudentDetailClient({
@@ -35,6 +50,7 @@ export function StudentDetailClient({
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [relation, setRelation] = useState<GuardianRelation>('Father');
+  const [conflict, setConflict] = useState<ExistingVisitorConflict | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -63,8 +79,9 @@ export function StudentDetailClient({
     };
   }, [schoolId, studentId, refreshKey]);
 
-  const handleAddGuardian = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitGuardian = async (
+    conflictResolution?: 'use_existing' | 'update_name'
+  ) => {
     setErrorMsg(null);
 
     const res = await fetch(
@@ -76,20 +93,32 @@ export function StudentDetailClient({
           name: name.trim(),
           phone: phone.trim(),
           relation,
+          ...(conflictResolution ? { conflictResolution } : {}),
         }),
       }
     );
 
     const data = await res.json();
+    if (res.status === 409 && data.existingVisitor) {
+      setConflict(data.existingVisitor);
+      return;
+    }
+
     if (!res.ok) {
       setErrorMsg(data.error ?? 'Failed to add guardian');
       return;
     }
 
+    setConflict(null);
     setName('');
     setPhone('');
     setRelation('Father');
     setRefreshKey((k) => k + 1);
+  };
+
+  const handleAddGuardian = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitGuardian();
   };
 
   const handleRemoveGuardian = async (guardianLinkId: string) => {
@@ -182,7 +211,7 @@ export function StudentDetailClient({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{t('addGuardian')}</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
           <form onSubmit={handleAddGuardian} className="space-y-2.5 text-xs">
             <div>
               <Label htmlFor="guardianName" className="text-xs">
@@ -191,7 +220,10 @@ export function StudentDetailClient({
               <Input
                 id="guardianName"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setConflict(null);
+                }}
                 required
                 className="h-9 text-xs"
               />
@@ -207,7 +239,10 @@ export function StudentDetailClient({
                 inputMode="numeric"
                 maxLength={10}
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setConflict(null);
+                }}
                 required
                 className="h-9 text-xs"
               />
@@ -235,6 +270,43 @@ export function StudentDetailClient({
               {t('addGuardian')}
             </Button>
           </form>
+
+          {conflict && (
+            <div
+              role="alert"
+              className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950"
+            >
+              <p className="font-semibold">
+                {t('phoneBelongsTo', { name: conflict.name })}
+              </p>
+              {conflict.linkedStudents.length > 0 && (
+                <ul className="list-disc pl-4 text-[11px] text-amber-900">
+                  {conflict.linkedStudents.map((ls) => (
+                    <li key={`${ls.studentId}-${ls.relation}`}>
+                      {ls.name} ({ls.admissionNo}) — {t(`relations.${ls.relation}`)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void submitGuardian('use_existing')}
+                >
+                  {t('useThisPerson')}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void submitGuardian('update_name')}
+                >
+                  {t('updateName')}
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

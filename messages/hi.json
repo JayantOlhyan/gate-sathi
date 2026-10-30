@@ -84,6 +84,9 @@
     "phone": "10 अंकों का मोबाइल नंबर",
     "relation": "संबंध",
     "remove": "हटाएं",
+    "phoneBelongsTo": "यह नंबर {name} का है।",
+    "useThisPerson": "इसी व्यक्ति का उपयोग करें",
+    "updateName": "नाम अपडेट करें",
     "relations": {
       "Father": "पिता (Father)",
       "Mother": "माता (Mother)",

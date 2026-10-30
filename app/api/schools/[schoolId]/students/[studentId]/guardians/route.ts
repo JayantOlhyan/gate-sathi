@@ -47,7 +47,7 @@ export async function GET(
       studentId: new Types.ObjectId(studentId),
       approved: true,
     })
-      .populate('visitorId', 'name phone photoUrl')
+      .populate('visitorId', 'name phone photoKey')
       .lean();
 
     const guardians = links.map((link) => {
@@ -55,7 +55,7 @@ export async function GET(
         _id?: Types.ObjectId;
         name?: string;
         phone?: string;
-        photoUrl?: string;
+        photoKey?: string;
       } | null;
 
       return {
@@ -63,7 +63,7 @@ export async function GET(
         visitorId: visitor?._id ? String(visitor._id) : '',
         name: visitor?.name ?? '',
         phone: visitor?.phone ?? '',
-        photoUrl: visitor?.photoUrl ?? null,
+        photoKey: visitor?.photoKey ?? null,
         relation: link.relation,
         approved: link.approved,
         approvedAt: link.approvedAt,
@@ -107,25 +107,96 @@ export async function POST(
       throw new RbacError('Forbidden: student does not belong to this school', 403);
     }
 
-    // Find-or-create Visitor by {schoolId, phone}
-    const visitor = await Visitor.findOneAndUpdate(
-      { schoolId: schoolObjectId, phone: body.phone },
-      {
-        $set: {
-          name: body.name,
-        },
-        $setOnInsert: {
-          schoolId: schoolObjectId,
-          phone: body.phone,
-          isBlocked: false,
-        },
-      },
-      { upsert: true, new: true, runValidators: true }
-    );
-
     const approvedByObjectId = Types.ObjectId.isValid(user.id)
       ? new Types.ObjectId(user.id)
       : new Types.ObjectId();
+
+    let visitor = await Visitor.findOne({
+      schoolId: schoolObjectId,
+      phone: body.phone,
+    });
+
+    if (visitor) {
+      const existingName = visitor.name.trim();
+      const requestedName = body.name.trim();
+
+      if (existingName !== requestedName) {
+        if (!body.conflictResolution) {
+          const existingLinks = await GuardianLink.find({
+            schoolId: schoolObjectId,
+            visitorId: visitor._id,
+            approved: true,
+          })
+            .populate('studentId', 'name admissionNo className section')
+            .lean();
+
+          const relations = Array.from(
+            new Set(existingLinks.map((l) => l.relation))
+          );
+
+          const linkedStudents = existingLinks.map((l) => {
+            const s = l.studentId as unknown as {
+              _id?: Types.ObjectId;
+              name?: string;
+              admissionNo?: string;
+              className?: string;
+              section?: string;
+            } | null;
+
+            return {
+              studentId: s?._id ? String(s._id) : '',
+              name: s?.name ?? '',
+              admissionNo: s?.admissionNo ?? '',
+              className: s?.className ?? '',
+              section: s?.section ?? '',
+              relation: l.relation,
+            };
+          });
+
+          return NextResponse.json(
+            {
+              error: `This number belongs to ${existingName}.`,
+              existingVisitor: {
+                visitorId: String(visitor._id),
+                name: existingName,
+                phone: visitor.phone,
+                relations,
+                linkedStudents,
+              },
+            },
+            { status: 409 }
+          );
+        }
+
+        if (body.conflictResolution === 'update_name') {
+          const previousName = visitor.name;
+          visitor.name = requestedName;
+          await visitor.save();
+
+          await writeAuditLog({
+            schoolId: schoolObjectId,
+            userId: approvedByObjectId,
+            action: 'visitor.rename',
+            entityType: 'Visitor',
+            entityId: visitor._id,
+            metadata: {
+              previousName,
+              newName: requestedName,
+              phone: visitor.phone,
+              studentId,
+            },
+          });
+        }
+        // If conflictResolution === 'use_existing', keep visitor.name unchanged
+      }
+    } else {
+      visitor = await Visitor.create({
+        schoolId: schoolObjectId,
+        phone: body.phone,
+        name: body.name.trim(),
+        isBlocked: false,
+      });
+    }
 
     const now = new Date();
     const guardianLink = await GuardianLink.findOneAndUpdate(
@@ -158,7 +229,7 @@ export async function POST(
         studentId,
         visitorId: String(visitor._id),
         phone: body.phone,
-        name: body.name,
+        name: visitor.name,
         relation: body.relation,
       },
     });
@@ -170,7 +241,7 @@ export async function POST(
           visitorId: String(visitor._id),
           name: visitor.name,
           phone: visitor.phone,
-          photoUrl: visitor.photoUrl ?? null,
+          photoKey: visitor.photoKey ?? null,
           relation: guardianLink.relation,
           approved: guardianLink.approved,
           approvedAt: guardianLink.approvedAt,

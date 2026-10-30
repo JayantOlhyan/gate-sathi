@@ -84,6 +84,9 @@
     "phone": "10-Digit Mobile Number",
     "relation": "Relation",
     "remove": "Remove",
+    "phoneBelongsTo": "This number belongs to {name}.",
+    "useThisPerson": "Use this person",
+    "updateName": "Update name",
     "relations": {
       "Father": "Father",
       "Mother": "Mother",

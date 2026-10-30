@@ -11,6 +11,7 @@ import {
 export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
 export const MAX_IMPORT_ROWS = 5000;
 export const PREVIEW_ROW_LIMIT = 20;
+export const BULK_WRITE_CHUNK_SIZE = 500;
 
 export class ImportValidationError extends Error {
   status = 400;
@@ -116,7 +117,9 @@ export function parseSpreadsheetBuffer(buffer: Buffer): {
     throw new ImportValidationError('Spreadsheet contains no header row');
   }
 
-  const headers = (matrix[0] ?? []).map((cell) => String(cell ?? '').trim()).filter(Boolean);
+  const headers = (matrix[0] ?? [])
+    .map((cell) => String(cell ?? '').trim())
+    .filter(Boolean);
   if (headers.length === 0) {
     throw new ImportValidationError('Spreadsheet header row is empty');
   }
@@ -229,6 +232,22 @@ export function buildImportReportCsv(rows: ImportRowReport[]): string {
   return [header, ...lines].join('\n');
 }
 
+interface ValidatedImportRow {
+  rowNumber: number;
+  reportIndex: number;
+  admissionNo: string;
+  name: string;
+  className: string;
+  section: string;
+  rollNumber: string;
+}
+
+interface BulkWriteErrorItem {
+  index: number;
+  errmsg?: string;
+  message?: string;
+}
+
 export async function executeStudentImport(params: {
   schoolId: string | Types.ObjectId;
   userId: string | Types.ObjectId;
@@ -254,10 +273,9 @@ export async function executeStudentImport(params: {
   const map = parsedMapping.data;
   const schoolObjectId = new Types.ObjectId(String(params.schoolId));
 
-  const rows: ImportRowReport[] = [];
-  let created = 0;
-  let updated = 0;
-  let failed = 0;
+  // Step 1: Validate all rows in memory first
+  const rows: ImportRowReport[] = new Array(rawRows.length);
+  const validRows: ValidatedImportRow[] = [];
 
   for (let i = 0; i < rawRows.length; i++) {
     const raw = rawRows[i] ?? {};
@@ -274,71 +292,144 @@ export async function executeStudentImport(params: {
     const validated = studentImportRowSchema.safeParse(candidate);
     if (!validated.success) {
       const reason = validated.error.issues.map((iss) => iss.message).join('; ');
-      failed += 1;
-      rows.push({
+      rows[i] = {
         rowNumber,
         admissionNo: candidate.admissionNo,
         name: candidate.name,
         status: 'failed',
         reason,
-      });
+      };
       continue;
     }
 
     const data = validated.data;
-    try {
-      const existing = await Student.findOne({
+    validRows.push({
+      rowNumber,
+      reportIndex: i,
+      admissionNo: data.admissionNo,
+      name: data.name,
+      className: data.className,
+      section: data.section,
+      rollNumber: data.rollNumber ?? '',
+    });
+  }
+
+  // Step 2: Single query to find existing admissionNos in DB
+  if (validRows.length > 0) {
+    const uniqueAdmissionNos = Array.from(
+      new Set(validRows.map((r) => r.admissionNo))
+    );
+    const existingDocs = await Student.find(
+      {
         schoolId: schoolObjectId,
-        admissionNo: data.admissionNo,
-      })
-        .select('_id')
-        .lean();
+        admissionNo: { $in: uniqueAdmissionNos },
+      },
+      { admissionNo: 1 }
+    ).lean();
 
-      await Student.findOneAndUpdate(
-        { schoolId: schoolObjectId, admissionNo: data.admissionNo },
-        {
-          $set: {
-            schoolId: schoolObjectId,
-            admissionNo: data.admissionNo,
-            name: data.name,
-            className: data.className,
-            section: data.section,
-            rollNumber: data.rollNumber ?? '',
-            isActive: true,
-          },
-        },
-        { upsert: true, new: true, runValidators: true }
-      );
+    const knownExistingSet = new Set(existingDocs.map((d) => d.admissionNo));
 
-      if (existing) {
-        updated += 1;
-        rows.push({
-          rowNumber,
-          admissionNo: data.admissionNo,
-          name: data.name,
+    // Pre-assign created vs updated status before bulkWrite
+    for (const vr of validRows) {
+      if (knownExistingSet.has(vr.admissionNo)) {
+        rows[vr.reportIndex] = {
+          rowNumber: vr.rowNumber,
+          admissionNo: vr.admissionNo,
+          name: vr.name,
           status: 'updated',
           reason: 'Updated existing student by admissionNo',
-        });
+        };
       } else {
-        created += 1;
-        rows.push({
-          rowNumber,
-          admissionNo: data.admissionNo,
-          name: data.name,
+        knownExistingSet.add(vr.admissionNo);
+        rows[vr.reportIndex] = {
+          rowNumber: vr.rowNumber,
+          admissionNo: vr.admissionNo,
+          name: vr.name,
           status: 'created',
           reason: 'Created new student',
-        });
+        };
       }
-    } catch (err) {
-      failed += 1;
-      rows.push({
-        rowNumber,
-        admissionNo: data.admissionNo,
-        name: data.name,
-        status: 'failed',
-        reason: err instanceof Error ? err.message : 'Database upsert failed',
-      });
     }
+
+    // Step 3: Student.bulkWrite with updateOne+upsert ops in chunks of 500, ordered: false
+    for (
+      let chunkStart = 0;
+      chunkStart < validRows.length;
+      chunkStart += BULK_WRITE_CHUNK_SIZE
+    ) {
+      const chunk = validRows.slice(
+        chunkStart,
+        chunkStart + BULK_WRITE_CHUNK_SIZE
+      );
+      const ops = chunk.map((vr) => ({
+        updateOne: {
+          filter: { schoolId: schoolObjectId, admissionNo: vr.admissionNo },
+          update: {
+            $set: {
+              schoolId: schoolObjectId,
+              admissionNo: vr.admissionNo,
+              name: vr.name,
+              className: vr.className,
+              section: vr.section,
+              rollNumber: vr.rollNumber,
+              isActive: true,
+            },
+          },
+          upsert: true,
+        },
+      }));
+
+      try {
+        await Student.bulkWrite(ops, { ordered: false });
+      } catch (err) {
+        // Step 4: Map per-chunk write errors back to row numbers in the report
+        const writeErrors: BulkWriteErrorItem[] =
+          err &&
+          typeof err === 'object' &&
+          'writeErrors' in err &&
+          Array.isArray((err as { writeErrors?: unknown[] }).writeErrors)
+            ? ((err as { writeErrors: BulkWriteErrorItem[] }).writeErrors ?? [])
+            : [];
+
+        if (writeErrors.length > 0) {
+          for (const we of writeErrors) {
+            const failedRow = chunk[we.index];
+            if (failedRow) {
+              rows[failedRow.reportIndex] = {
+                rowNumber: failedRow.rowNumber,
+                admissionNo: failedRow.admissionNo,
+                name: failedRow.name,
+                status: 'failed',
+                reason:
+                  we.errmsg ?? we.message ?? 'Database bulkWrite error on row',
+              };
+            }
+          }
+        } else {
+          // Entire chunk failed unexpectedly
+          const message =
+            err instanceof Error ? err.message : 'Database bulkWrite failed';
+          for (const failedRow of chunk) {
+            rows[failedRow.reportIndex] = {
+              rowNumber: failedRow.rowNumber,
+              admissionNo: failedRow.admissionNo,
+              name: failedRow.name,
+              status: 'failed',
+              reason: message,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  let created = 0;
+  let updated = 0;
+  let failed = 0;
+  for (const r of rows) {
+    if (r.status === 'created') created += 1;
+    else if (r.status === 'updated') updated += 1;
+    else failed += 1;
   }
 
   await writeAuditLog({
