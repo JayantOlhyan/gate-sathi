@@ -3,9 +3,14 @@ import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { checkR2Health } from '@/lib/r2';
 import { isMockOtpActive } from '@/lib/otp';
-import { getRateLimiter, LOGIN_WINDOW_MS } from '@/lib/rate-limit';
+import {
+  getRateLimiter,
+  InMemoryRateLimiter,
+  LOGIN_WINDOW_MS,
+} from '@/lib/rate-limit';
 
 export const HEALTH_RATE_LIMIT_MAX = 30;
+const fallbackHealthLimiter = new InMemoryRateLimiter();
 
 function extractClientIp(req: NextRequest): string {
   const forwarded = req.headers.get('x-forwarded-for');
@@ -20,14 +25,25 @@ function extractClientIp(req: NextRequest): string {
 
 export async function GET(req: NextRequest) {
   const ip = extractClientIp(req);
-  const limiter = getRateLimiter();
-  const rateCheck = await limiter.consume(
-    `health:ip:${ip}`,
-    HEALTH_RATE_LIMIT_MAX,
-    LOGIN_WINDOW_MS
-  );
+  let rateAllowed = true;
+  try {
+    const limiter = getRateLimiter();
+    const rateCheck = await limiter.consume(
+      `health:ip:${ip}`,
+      HEALTH_RATE_LIMIT_MAX,
+      LOGIN_WINDOW_MS
+    );
+    rateAllowed = rateCheck.allowed;
+  } catch {
+    const fallbackCheck = await fallbackHealthLimiter.consume(
+      `health:ip:${ip}`,
+      HEALTH_RATE_LIMIT_MAX,
+      LOGIN_WINDOW_MS
+    );
+    rateAllowed = fallbackCheck.allowed;
+  }
 
-  if (!rateCheck.allowed) {
+  if (!rateAllowed) {
     return NextResponse.json(
       { error: 'Too many requests' },
       { status: 429 }
