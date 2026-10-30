@@ -7,7 +7,12 @@ import { LanguageToggle } from '@/components/language-toggle';
 import { LoginForm } from './login-form';
 
 export default async function LoginPage() {
-  const session = await auth();
+  let session = null;
+  try {
+    session = await auth();
+  } catch {
+    session = null;
+  }
   if (session?.user?.id && session.user.role) {
     redirect(getDefaultRouteForRole(session.user.role));
   }

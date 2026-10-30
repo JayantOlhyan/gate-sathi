@@ -7,6 +7,7 @@ import {
 import type { Role } from '@/lib/validations';
 
 export const authConfig = {
+  trustHost: true,
   pages: {
     signIn: '/login',
   },
