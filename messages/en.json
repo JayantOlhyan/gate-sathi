@@ -6,6 +6,8 @@
     "logout": "Sign Out"
   },
   "login": {
+    "tagline": "Har entry, har bachcha, surakshit.",
+    "subtitle": "School ka digital register",
     "heading": "Sign In",
     "description": "Enter your 10-digit mobile number and password",
     "phoneLabel": "Mobile Number",

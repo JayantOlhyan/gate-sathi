@@ -1,5 +1,10 @@
 @import 'tailwindcss';
 
+@theme {
+  --color-brand-blue: #1e3a8a;
+  --color-brand-saffron: #f59e0b;
+}
+
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;

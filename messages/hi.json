@@ -6,6 +6,8 @@
     "logout": "लॉग आउट"
   },
   "login": {
+    "tagline": "हर एंट्री, हर बच्चा, सुरक्षित।",
+    "subtitle": "स्कूल का डिजिटल रजिस्टर (School ka digital register)",
     "heading": "लॉग इन करें",
     "description": "अपना 10 अंकों का मोबाइल नंबर और पासवर्ड दर्ज करें",
     "phoneLabel": "मोबाइल नंबर",

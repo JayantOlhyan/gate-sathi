@@ -45,7 +45,7 @@ export default async function DashboardPage() {
             )}
             <Link
               href="/students"
-              className="inline-flex h-11 w-full items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-slate-50 shadow hover:bg-slate-900/90"
+              className="inline-flex h-11 w-full items-center justify-center rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white shadow hover:bg-brand-blue/90"
             >
               {t('manageStudents')}
             </Link>

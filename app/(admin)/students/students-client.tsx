@@ -645,7 +645,7 @@ export function StudentsClient({ schoolId }: { schoolId: string }) {
               <div className="flex items-center gap-1.5 pt-1">
                 <Link
                   href={`/students/${s._id}?schoolId=${schoolId}`}
-                  className="inline-flex h-8 flex-1 items-center justify-center rounded-md bg-slate-900 px-2.5 text-[11px] font-medium text-white"
+                  className="inline-flex h-8 flex-1 items-center justify-center rounded-md bg-brand-blue px-2.5 text-[11px] font-medium text-white hover:bg-brand-blue/90"
                 >
                   {t('viewGuardians')}
                 </Link>
