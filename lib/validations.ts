@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { GUARDIAN_RELATIONS } from '@/models/GuardianLink';
 import { UNAPPROVED_REASON_CODES } from '@/models/Visit';
 
-export const ROLES = ['super_admin', 'principal', 'guard'] as const;
+export const ROLES = ['super_admin', 'principal', 'guard', 'teacher'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const indianPhoneSchema = z
@@ -196,4 +196,55 @@ export const leadCreateBodySchema = z.object({
   website: z.string().optional().default(''),
   honeypot: z.string().optional().default(''),
 });
+
+export const classAssignmentSchema = z.object({
+  schoolId: z.string().trim().optional(),
+  className: z.string().trim().min(1, 'Class name is required'),
+  section: z.string().trim().min(1, 'Section is required'),
+});
+
+export const teacherCreateBodySchema = z.object({
+  name: z.string().trim().min(1, 'Teacher name is required').max(120),
+  phone: indianPhoneSchema,
+  className: z.string().trim().min(1, 'Class name is required'),
+  section: z.string().trim().min(1, 'Section is required'),
+  conflictResolution: z.enum(['use_existing', 'update_name']).optional(),
+});
+
+export const teacherUpdateBodySchema = z
+  .object({
+    isActive: z.boolean().optional(),
+    classAssignments: z.array(classAssignmentSchema).optional(),
+  })
+  .refine((obj) => Object.keys(obj).length > 0, {
+    message: 'At least one field must be provided for update',
+  });
+
+export const approvalDecisionBodySchema = z
+  .object({
+    decision: z.enum(['approve', 'reject']),
+    note: z.string().trim().optional(),
+    addAsApprovedGuardian: z.boolean().optional().default(false),
+  })
+  .refine(
+    (data) => {
+      if (data.decision === 'reject') {
+        return Boolean(data.note && data.note.trim().length >= 1);
+      }
+      return true;
+    },
+    {
+      message: 'A short note is required when rejecting a request',
+      path: ['note'],
+    }
+  );
+
+export const pushSubscriptionBodySchema = z.object({
+  endpoint: z.string().url('Invalid push endpoint URL'),
+  keys: z.object({
+    p256dh: z.string().min(1, 'Missing p256dh key'),
+    auth: z.string().min(1, 'Missing auth secret'),
+  }),
+});
+
 
