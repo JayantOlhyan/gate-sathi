@@ -41,6 +41,7 @@ type GateStep =
   | 'otp'
   | 'consent'
   | 'entry'
+  | 'waiting_teacher'
   | 'confirmed';
 
 export function GateClient({
@@ -91,6 +92,14 @@ export function GateClient({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Teacher approval state
+  const [savedVisitId, setSavedVisitId] = useState<string | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<
+    'pending' | 'escalated' | 'approved' | 'rejected' | 'expired'
+  >('pending');
+  const [approvingTeacherName, setApprovingTeacherName] = useState<string>('');
+  const [teacherNotes, setTeacherNotes] = useState<string[]>([]);
+
   const resetToStart = () => {
     setStep('phone');
     setPhone('');
@@ -113,7 +122,46 @@ export function GateClient({
     setConfirmUnapprovedPickup(false);
     setClientId(crypto.randomUUID());
     setErrorMsg(null);
+    setSavedVisitId(null);
+    setApprovalStatus('pending');
+    setApprovingTeacherName('');
+    setTeacherNotes([]);
   };
+
+  // Poll approval status when waiting for teacher
+  useEffect(() => {
+    if (step !== 'waiting_teacher' || !savedVisitId) return;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const res = await fetch(
+          `/api/gate/visits/${savedVisitId}/approval-status?schoolId=${schoolId}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.status) {
+          setApprovalStatus(data.status);
+        }
+        if (data.teacherName) {
+          setApprovingTeacherName(data.teacherName);
+        }
+        if (data.notes && Array.isArray(data.notes)) {
+          setTeacherNotes(data.notes);
+        }
+      } catch {
+        // ignore poll errors
+      }
+    };
+
+    pollStatus();
+    const interval = setInterval(pollStatus, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [step, savedVisitId, schoolId]);
 
   // Search other students when query changes in 'entry' step
   useEffect(() => {
@@ -337,6 +385,25 @@ export function GateClient({
       }
 
       setConfirmUnapprovedPickup(false);
+
+      if (data.approvalRequests && data.approvalRequests.length > 0) {
+        setSavedVisitId(data.visit?._id ?? data.visit?.id);
+        const tNames = Array.from(
+          new Set(
+            data.approvalRequests
+              .map((r: any) => r.teacherName)
+              .filter(Boolean)
+          )
+        );
+        setApprovingTeacherName(
+          tNames.length > 0 ? tNames.join(', ') : 'Principal (प्रधानाचार्य)'
+        );
+        setApprovalStatus('pending');
+        setTeacherNotes([]);
+        setStep('waiting_teacher');
+        return;
+      }
+
       setStep('confirmed');
     } catch {
       setErrorMsg('Network error saving visit');
@@ -378,6 +445,126 @@ export function GateClient({
 
     await submitVisitToServer();
   };
+
+  if (step === 'waiting_teacher') {
+    const isApproved = approvalStatus === 'approved';
+    const isRejected = approvalStatus === 'rejected';
+    const isEscalated = approvalStatus === 'escalated';
+
+    return (
+      <Card
+        className={`border-2 text-center transition-all ${
+          isApproved
+            ? 'border-emerald-500 bg-emerald-50'
+            : isRejected
+            ? 'border-red-500 bg-red-50'
+            : isEscalated
+            ? 'border-amber-500 bg-amber-50'
+            : 'border-blue-500 bg-blue-50'
+        }`}
+      >
+        <CardContent className="space-y-4 py-8">
+          {isApproved ? (
+            <>
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow">
+                ✓
+              </div>
+              <h2 className="text-lg font-bold text-emerald-950">
+                {t('approvedHeading')} {approvingTeacherName || 'Teacher'}
+              </h2>
+              <p className="text-xs text-emerald-800">{t('approvedSub')}</p>
+              {teacherNotes.length > 0 && (
+                <div className="rounded border border-emerald-200 bg-white/80 p-2.5 text-xs text-emerald-900">
+                  <span className="font-semibold">{t('teacherNoteLabel')}:</span>{' '}
+                  {teacherNotes.join('; ')}
+                </div>
+              )}
+              <Button
+                type="button"
+                className="mt-4 w-full bg-emerald-700 hover:bg-emerald-800"
+                onClick={resetToStart}
+              >
+                {t('nextEntryBtn')}
+              </Button>
+            </>
+          ) : isRejected ? (
+            <>
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-600 text-2xl font-bold text-white shadow">
+                ✕
+              </div>
+              <h2 className="text-lg font-bold text-red-950">
+                {t('rejectedHeading')}
+              </h2>
+              <p className="text-xs font-semibold text-red-800">
+                {t('rejectedSub')}
+              </p>
+              {teacherNotes.length > 0 && (
+                <div className="rounded border border-red-200 bg-white/80 p-2.5 text-xs text-red-900">
+                  <span className="font-semibold">{t('teacherNoteLabel')}:</span>{' '}
+                  {teacherNotes.join('; ')}
+                </div>
+              )}
+              <p className="text-[11px] text-red-700">
+                सुरक्षा नियम: छात्र को गेट से बाहर जाने की अनुमति नहीं है।
+              </p>
+              <Button
+                type="button"
+                variant="destructive"
+                className="mt-4 w-full"
+                onClick={resetToStart}
+              >
+                {t('backToGateBtn')}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="mx-auto flex h-14 w-14 animate-pulse items-center justify-center rounded-full bg-amber-500 text-2xl font-bold text-white shadow">
+                ⏳
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  {t('waitingTeacherHeading')}
+                </h2>
+                <p className="mt-1 text-xs text-slate-600">
+                  {approvingTeacherName ? (
+                    <span>
+                      {t('waitingTeacherName')}:{' '}
+                      <strong>{approvingTeacherName}</strong>
+                    </span>
+                  ) : (
+                    t('waitingTeacherSub')
+                  )}
+                </p>
+              </div>
+
+              {isEscalated && (
+                <div className="rounded border border-amber-300 bg-amber-100 p-2 text-xs font-medium text-amber-900">
+                  {t('escalatedNotice')}
+                </div>
+              )}
+
+              <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500">
+                <span className="inline-block h-2 w-2 animate-ping rounded-full bg-blue-600" />
+                {t('waitingLiveStatus')}
+              </div>
+
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={resetToStart}
+                >
+                  {t('backToGateBtn')}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (step === 'confirmed') {
     return (
