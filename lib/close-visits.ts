@@ -1,6 +1,7 @@
 import { connectDB } from '@/lib/db';
 import { School } from '@/models/School';
 import { Visit } from '@/models/Visit';
+import { ApprovalRequest } from '@/models/ApprovalRequest';
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // +5 hours 30 minutes
 
@@ -59,7 +60,18 @@ export async function runAutoCloseVisits(now: Date = new Date()): Promise<{
             },
           }
         );
-        closedCount += updateRes.modifiedCount ?? 0;
+        if (updateRes.modifiedCount) {
+          closedCount += updateRes.modifiedCount;
+          await ApprovalRequest.updateMany(
+            {
+              visitId: visit._id,
+              status: { $in: ['pending', 'escalated'] },
+            },
+            {
+              $set: { status: 'expired' },
+            }
+          );
+        }
       }
     }
   }
