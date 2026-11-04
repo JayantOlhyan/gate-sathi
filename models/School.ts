@@ -8,6 +8,8 @@ export interface ISchool extends Document {
   state: string;
   address?: string;
   closingHourIst: string;
+  teacherApprovalFor: 'pickup' | 'all_flagged';
+  teacherApprovalEscalationMinutes: number;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -48,6 +50,15 @@ const SchoolSchema = new Schema<ISchool>(
       type: String,
       default: '17:00',
       trim: true,
+    },
+    teacherApprovalFor: {
+      type: String,
+      enum: ['pickup', 'all_flagged'],
+      default: 'pickup',
+    },
+    teacherApprovalEscalationMinutes: {
+      type: Number,
+      default: 5,
     },
     isActive: {
       type: Boolean,
