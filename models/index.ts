@@ -22,4 +22,15 @@ export { AuditLog, type IAuditLog } from './AuditLog';
 export { RateLimit, type IRateLimit } from './RateLimit';
 export { OtpRequest, type IOtpRequest } from './OtpRequest';
 export { Lead, type ILead } from './Lead';
+export {
+  ApprovalRequest,
+  APPROVAL_STATUSES,
+  type IApprovalRequest,
+  type ApprovalStatus,
+} from './ApprovalRequest';
+export {
+  PushSubscription,
+  type IPushSubscription,
+} from './PushSubscription';
+
 
