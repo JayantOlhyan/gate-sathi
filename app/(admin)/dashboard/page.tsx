@@ -5,6 +5,7 @@ import { AppHeader } from '@/components/app-header';
 import { InstallPrompt } from '@/components/install-prompt';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
+import { DashboardClient } from './dashboard-client';
 
 export default async function DashboardPage() {
   let user;
@@ -33,24 +34,20 @@ export default async function DashboardPage() {
         <InstallPrompt variant="compact" />
         <Card>
           <CardHeader>
-            <span className="inline-block w-fit rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
-              {t('badge')}
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="inline-block w-fit rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
+                {t('badge')}
+              </span>
+              {activeSchoolId && (
+                <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-600">
+                  School: {activeSchoolId.slice(-6)}
+                </span>
+              )}
+            </div>
             <CardTitle className="pt-1">{t('title')}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4 text-sm text-slate-600">
-            <p>{t('placeholder')}</p>
-            {activeSchoolId && (
-              <p className="rounded bg-slate-100 p-2 font-mono text-xs text-slate-700">
-                {t('assignedSchool')}: {activeSchoolId}
-              </p>
-            )}
-            <Link
-              href="/students"
-              className="inline-flex h-11 w-full items-center justify-center rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white shadow hover:bg-brand-blue/90"
-            >
-              {t('manageStudents')}
-            </Link>
+          <CardContent className="space-y-4">
+            <DashboardClient schoolId={activeSchoolId} />
           </CardContent>
         </Card>
       </main>
