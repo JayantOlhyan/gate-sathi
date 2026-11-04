@@ -19,6 +19,7 @@ export interface AuthenticatedUser {
   phone: string;
   role: Role;
   schoolIds: string[];
+  classAssignments?: Array<{ schoolId: string; className: string; section: string }>;
   tokenVersion: number;
 }
 
@@ -76,6 +77,23 @@ export async function authenticateWithPhoneAndPassword(
           tokenVersion: 0,
         };
       }
+      if (phone === '9999999993') {
+        return {
+          id: '6ae4b61d181c9c0a1f841a34',
+          name: 'Sunita Sharma (Teacher)',
+          phone: '9999999993',
+          role: 'teacher',
+          schoolIds: ['6ae4b61d181c9c0a1f841a3e'],
+          classAssignments: [
+            {
+              schoolId: '6ae4b61d181c9c0a1f841a3e',
+              className: '5',
+              section: 'A',
+            },
+          ],
+          tokenVersion: 0,
+        };
+      }
     }
     return null;
   }
@@ -105,6 +123,13 @@ export async function authenticateWithPhoneAndPassword(
     phone: user.phone,
     role: user.role,
     schoolIds: user.schoolIds.map((id) => String(id)),
+    classAssignments: Array.isArray(user.classAssignments)
+      ? user.classAssignments.map((ca) => ({
+          schoolId: String(ca.schoolId),
+          className: ca.className,
+          section: ca.section,
+        }))
+      : [],
     tokenVersion: user.tokenVersion ?? 0,
   };
 }
@@ -114,6 +139,7 @@ export interface JwtTokenState extends Record<string, unknown> {
   phone?: string;
   role?: Role;
   schoolIds?: string[];
+  classAssignments?: Array<{ schoolId: string; className: string; section: string }>;
   tokenVersion?: number;
   lastCheckedAt?: number;
   invalidated?: boolean;
@@ -133,6 +159,7 @@ export async function verifyAndRefreshJwtToken(
       phone: user.phone,
       role: user.role,
       schoolIds: user.schoolIds,
+      classAssignments: user.classAssignments,
       tokenVersion: user.tokenVersion ?? 0,
       lastCheckedAt: nowMs,
       invalidated: false,
@@ -160,7 +187,7 @@ export async function verifyAndRefreshJwtToken(
   }
 
   const dbUser = await User.findById(token.id)
-    .select('isActive tokenVersion role schoolIds')
+    .select('isActive tokenVersion role schoolIds classAssignments')
     .lean();
 
   if (
@@ -179,6 +206,13 @@ export async function verifyAndRefreshJwtToken(
     ...token,
     role: dbUser.role,
     schoolIds: dbUser.schoolIds.map((id) => String(id)),
+    classAssignments: Array.isArray(dbUser.classAssignments)
+      ? dbUser.classAssignments.map((ca) => ({
+          schoolId: String(ca.schoolId),
+          className: ca.className,
+          section: ca.section,
+        }))
+      : [],
     tokenVersion: dbUser.tokenVersion ?? 0,
     lastCheckedAt: nowMs,
     invalidated: false,
@@ -186,5 +220,7 @@ export async function verifyAndRefreshJwtToken(
 }
 
 export function getDefaultRouteForRole(role: Role): string {
-  return role === 'guard' ? '/gate' : '/dashboard';
+  if (role === 'guard') return '/gate';
+  if (role === 'teacher') return '/teacher';
+  return '/dashboard';
 }
