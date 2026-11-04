@@ -78,6 +78,17 @@ export async function runSeed() {
       role: 'guard' as const,
       schoolIds: [pilotSchool._id],
     },
+    {
+      name: 'Sunita Sharma (Teacher)',
+      phone: '9999999993',
+      password: 'Password@123',
+      role: 'teacher' as const,
+      schoolIds: [pilotSchool._id],
+      classAssignments: [
+        { schoolId: pilotSchool._id, className: '5', section: 'A' },
+        { schoolId: pilotSchool._id, className: '6', section: 'A' },
+      ],
+    },
   ];
 
   for (const u of seedUsers) {
@@ -93,6 +104,7 @@ export async function runSeed() {
           passwordHash,
           role: u.role,
           schoolIds: u.schoolIds,
+          classAssignments: (u as any).classAssignments || [],
           tokenVersion: 0,
           isActive: true,
         },
