@@ -26,7 +26,7 @@ export async function GET(
     const rawParams = await context.params;
     const { schoolId: requestedSchoolId } = paramsSchema.parse(rawParams);
 
-    await requireRole('principal', 'super_admin');
+    const user = await requireRole('principal', 'super_admin', 'teacher');
     const { schoolId } = await requireSchoolAccess(requestedSchoolId);
 
     const { searchParams } = new URL(req.url);
@@ -47,11 +47,61 @@ export async function GET(
     if (!query.includeInactive) {
       filter.isActive = true;
     }
-    if (query.className) {
-      filter.className = query.className;
-    }
-    if (query.section) {
-      filter.section = query.section;
+
+    if (user.role === 'teacher') {
+      const assignments = (user.classAssignments || []).filter(
+        (a) => String(a.schoolId) === String(schoolId)
+      );
+      if (assignments.length === 0) {
+        return NextResponse.json(
+          {
+            schoolId,
+            students: [],
+            pagination: { page: 1, limit: query.limit, total: 0, totalPages: 1 },
+          },
+          { status: 200 }
+        );
+      }
+
+      if (query.className && query.section) {
+        const hasMatch = assignments.some(
+          (a) =>
+            a.className === query.className &&
+            a.section.toUpperCase() === query.section?.toUpperCase()
+        );
+        if (!hasMatch) {
+          return NextResponse.json(
+            { error: 'Forbidden: teacher not assigned to this class and section' },
+            { status: 403 }
+          );
+        }
+        filter.className = query.className;
+        filter.section = query.section;
+      } else if (query.className) {
+        const matchingSections = assignments
+          .filter((a) => a.className === query.className)
+          .map((a) => a.section);
+        if (matchingSections.length === 0) {
+          return NextResponse.json(
+            { error: 'Forbidden: teacher not assigned to this class' },
+            { status: 403 }
+          );
+        }
+        filter.className = query.className;
+        filter.section = { $in: matchingSections };
+      } else {
+        filter.$or = assignments.map((a) => ({
+          className: a.className,
+          section: a.section,
+        }));
+      }
+    } else {
+      if (query.className) {
+        filter.className = query.className;
+      }
+      if (query.section) {
+        filter.section = query.section;
+      }
     }
     if (query.q) {
       const regex = new RegExp(escapeRegex(query.q), 'i');
