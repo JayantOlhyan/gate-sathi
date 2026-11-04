@@ -44,6 +44,13 @@ export const authConfig = {
         session.user.schoolIds = Array.isArray(token.schoolIds)
           ? token.schoolIds.map(String)
           : [];
+        session.user.classAssignments = Array.isArray(token.classAssignments)
+          ? token.classAssignments.map((ca) => ({
+              schoolId: String(ca.schoolId),
+              className: ca.className,
+              section: ca.section,
+            }))
+          : [];
         session.user.tokenVersion =
           typeof token.tokenVersion === 'number' ? token.tokenVersion : 0;
       }
