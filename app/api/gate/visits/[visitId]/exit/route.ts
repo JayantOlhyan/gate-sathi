@@ -6,6 +6,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { handleApiError, requireRole, requireSchoolAccess } from '@/lib/rbac';
 import { gateExitVisitBodySchema, objectIdSchema } from '@/lib/validations';
 import { Visit } from '@/models/Visit';
+import { ApprovalRequest } from '@/models/ApprovalRequest';
 
 const paramsSchema = z.object({
   visitId: objectIdSchema,
@@ -32,6 +33,37 @@ export async function POST(
       : new Types.ObjectId();
 
     const now = new Date();
+
+    if (body.leftWithStudent) {
+      const existingVisit = await Visit.findOne({
+        _id: visitObjectId,
+        schoolId: schoolObjectId,
+        exitAt: null,
+      }).lean();
+
+      if (!existingVisit) {
+        return NextResponse.json(
+          { error: 'Open visit not found for this school' },
+          { status: 404 }
+        );
+      }
+
+      const blockingRequests = await ApprovalRequest.find({
+        visitId: visitObjectId,
+        status: { $in: ['pending', 'escalated', 'rejected'] },
+      }).lean();
+
+      if (blockingRequests.length > 0 || existingVisit.pickupBlocked) {
+        return NextResponse.json(
+          {
+            error:
+              'Cannot mark leftWithStudent: pickup is blocked or pending/rejected by teacher approval.',
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const updatedVisit = await Visit.findOneAndUpdate(
       {
         _id: visitObjectId,
