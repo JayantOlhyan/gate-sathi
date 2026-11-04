@@ -22,7 +22,7 @@ export async function GET(
     const rawParams = await context.params;
     const { schoolId: requestedSchoolId, studentId } = paramsSchema.parse(rawParams);
 
-    await requireRole('principal', 'super_admin');
+    const user = await requireRole('principal', 'super_admin', 'teacher');
     const { schoolId } = await requireSchoolAccess(requestedSchoolId);
 
     await connectDB();
@@ -34,6 +34,23 @@ export async function GET(
 
     if (!student) {
       return NextResponse.json({ error: 'Student not found' }, { status: 404 });
+    }
+
+    if (user.role === 'teacher') {
+      const assignments = (user.classAssignments || []).filter(
+        (a) => String(a.schoolId) === String(schoolId)
+      );
+      const hasAccess = assignments.some(
+        (a) =>
+          a.className === student.className &&
+          a.section.toUpperCase() === student.section.toUpperCase()
+      );
+      if (!hasAccess) {
+        return NextResponse.json(
+          { error: 'Forbidden: teacher not assigned to this student class and section' },
+          { status: 403 }
+        );
+      }
     }
 
     const guardianLinks = await GuardianLink.find({
