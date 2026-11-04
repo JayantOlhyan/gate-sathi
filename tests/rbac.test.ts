@@ -67,6 +67,16 @@ import { POST as cronCloseVisitsRoute } from '@/app/api/cron/close-visits/route'
 import { GET as healthRoute } from '@/app/api/health/route';
 import { POST as createLeadRoute } from '@/app/api/leads/route';
 import { GET as listAdminLeadsRoute } from '@/app/api/admin/leads/route';
+import { GET as listApprovalsRoute } from '@/app/api/schools/[schoolId]/approvals/route';
+import { POST as decideApprovalRoute } from '@/app/api/schools/[schoolId]/approvals/[requestId]/decide/route';
+import { GET as getApprovalStatusRoute } from '@/app/api/gate/visits/[visitId]/approval-status/route';
+import {
+  GET as listTeachersRoute,
+  POST as createTeacherRoute,
+} from '@/app/api/schools/[schoolId]/teachers/route';
+import { PATCH as updateTeacherRoute } from '@/app/api/schools/[schoolId]/teachers/[teacherId]/route';
+import { POST as importTeachersRoute } from '@/app/api/schools/[schoolId]/teachers/import/route';
+import { POST as pushSubscribeRoute } from '@/app/api/push/route';
 import MarketingLandingPage from '@/app/(marketing)/page';
 import AppRedirectPage from '@/app/app/page';
 import manifest from '@/app/manifest';
@@ -108,6 +118,8 @@ import {
   RateLimit,
   OtpRequest,
   Lead,
+  ApprovalRequest,
+  PushSubscription,
   recordVisit,
 } from '@/models';
 
@@ -1718,9 +1730,10 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
 
     // Auto-close cron job (at 18:00 IST = 12:30 UTC) closes only visit2 (still open) and flags autoClosed: true
     process.env.CRON_SECRET = 'test-cron-secret';
+    const tomorrowIst = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const cronRes = await cronCloseVisitsRoute(
       new NextRequest(
-        'http://localhost:3000/api/cron/close-visits?now=2026-10-30T12:30:00.000Z',
+        `http://localhost:3000/api/cron/close-visits?now=${tomorrowIst}`,
         {
           method: 'POST',
           headers: { Authorization: 'Bearer test-cron-secret' },
@@ -2285,5 +2298,580 @@ describe('GateSathi Phase 1 & Phase 2 — Real MongoDB Memory Server Suite', () 
       leads: Array<{ schoolName: string }>;
     };
     expect(superLeadsJson.leads.length).toBe(6);
+  });
+
+  describe('Phase 5 — Teacher approval for unlisted visitors', () => {
+    let p5School: any;
+    let guardUser: any;
+    let principalUser: any;
+    let teacher8A: any;
+    let teacher8B: any;
+    let student8A: any;
+    let student8B: any;
+
+    beforeEach(async () => {
+      p5School = await School.create({
+        schoolId: 'SCH-P5-' + Math.random().toString(36).substring(7),
+        name: 'Phase 5 Test School',
+        udiseCode: '0915' + Math.floor(1000000 + Math.random() * 9000000),
+        district: 'Lucknow',
+        state: 'Uttar Pradesh',
+        address: 'Test Address',
+        teacherApprovalFor: 'pickup',
+        teacherApprovalEscalationMinutes: 5,
+        isActive: true,
+      });
+
+      guardUser = await User.create({
+        name: 'Guard P5',
+        phone: '981' + Math.floor(1000000 + Math.random() * 9000000),
+        passwordHash: 'hash',
+        role: 'guard',
+        schoolIds: [p5School._id],
+        isActive: true,
+      });
+
+      principalUser = await User.create({
+        name: 'Principal P5',
+        phone: '982' + Math.floor(1000000 + Math.random() * 9000000),
+        passwordHash: 'hash',
+        role: 'principal',
+        schoolIds: [p5School._id],
+        isActive: true,
+      });
+
+      teacher8A = await User.create({
+        name: 'Teacher 8A',
+        phone: '983' + Math.floor(1000000 + Math.random() * 9000000),
+        passwordHash: 'hash',
+        role: 'teacher',
+        schoolIds: [p5School._id],
+        classAssignments: [
+          { schoolId: p5School._id, className: '8', section: 'A' },
+        ],
+        isActive: true,
+      });
+
+      teacher8B = await User.create({
+        name: 'Teacher 8B',
+        phone: '984' + Math.floor(1000000 + Math.random() * 9000000),
+        passwordHash: 'hash',
+        role: 'teacher',
+        schoolIds: [p5School._id],
+        classAssignments: [
+          { schoolId: p5School._id, className: '8', section: 'B' },
+        ],
+        isActive: true,
+      });
+
+      student8A = await Student.create({
+        schoolId: p5School._id,
+        admissionNo: 'ADM-8A-' + Math.random().toString(36).substring(7),
+        name: 'Rohan Sharma',
+        className: '8',
+        section: 'A',
+        rollNumber: '1',
+        isActive: true,
+      });
+
+      student8B = await Student.create({
+        schoolId: p5School._id,
+        admissionNo: 'ADM-8B-' + Math.random().toString(36).substring(7),
+        name: 'Priya Verma',
+        className: '8',
+        section: 'B',
+        rollNumber: '2',
+        isActive: true,
+      });
+    });
+
+    it('1. Unapproved pickup creates one request per student routed to the right class teacher', async () => {
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guardUser._id),
+          phone: guardUser.phone,
+          role: 'guard',
+          schoolIds: [String(p5School._id)],
+          tokenVersion: 0,
+        },
+      });
+
+      const res = await createGateVisitRoute(
+        new NextRequest('http://localhost:3000/api/gate/visits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schoolId: String(p5School._id),
+            clientId: 'client-p5-test-1',
+            phone: '9899001122',
+            name: 'Uncle Ram',
+            studentIds: [String(student8A._id), String(student8B._id)],
+            purpose: 'Pickup',
+            reasonCode: 'Relative',
+            reasonText: 'Family emergency',
+          }),
+        })
+      );
+
+      expect(res.status).toBe(201);
+      const data = await res.json();
+      expect(data.visit.isApproved).toBe(false);
+      expect(data.visit.pickupBlocked).toBe(true);
+      expect(data.approvalRequests).toHaveLength(2);
+
+      // Verify DB requests
+      const req8A = await ApprovalRequest.findOne({
+        visitId: data.visit._id,
+        studentId: student8A._id,
+      });
+      const req8B = await ApprovalRequest.findOne({
+        visitId: data.visit._id,
+        studentId: student8B._id,
+      });
+
+      expect(req8A).toBeDefined();
+      expect(String(req8A!.teacherId)).toBe(String(teacher8A._id));
+      expect(req8A!.status).toBe('pending');
+
+      expect(req8B).toBeDefined();
+      expect(String(req8B!.teacherId)).toBe(String(teacher8B._id));
+      expect(req8B!.status).toBe('pending');
+    });
+
+    it('2. Teacher of 8A cannot see or decide a request for 8B (403)', async () => {
+      // Create request for 8B
+      const visitor = await Visitor.create({
+        schoolId: p5School._id,
+        name: 'Unlisted Guest',
+        phone: '9877000001',
+      });
+      const visit = await Visit.create({
+        schoolId: p5School._id,
+        clientId: 'visit-8b-req',
+        visitorId: visitor._id,
+        studentIds: [student8B._id],
+        purpose: 'Pickup',
+        isApproved: false,
+        pickupBlocked: true,
+        reasonCode: 'Relative',
+        checkedInBy: guardUser._id,
+        entryAt: new Date(),
+      });
+      const req8B = await ApprovalRequest.create({
+        schoolId: p5School._id,
+        visitId: visit._id,
+        studentId: student8B._id,
+        visitorId: visitor._id,
+        teacherId: teacher8B._id,
+        status: 'pending',
+        requestedBy: guardUser._id,
+      });
+
+      // Teacher 8A logs in
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(teacher8A._id),
+          phone: teacher8A.phone,
+          role: 'teacher',
+          schoolIds: [String(p5School._id)],
+          classAssignments: [
+            { schoolId: String(p5School._id), className: '8', section: 'A' },
+          ],
+          tokenVersion: 0,
+        },
+      });
+
+      // Teacher 8A lists requests -> must NOT see 8B request
+      const listRes = await listApprovalsRoute(
+        new NextRequest(`http://localhost:3000/api/schools/${p5School._id}/approvals`),
+        { params: Promise.resolve({ schoolId: String(p5School._id) }) }
+      );
+      expect(listRes.status).toBe(200);
+      const listData = await listRes.json();
+      expect(listData.requests.some((r: any) => r._id === String(req8B._id))).toBe(false);
+
+      // Teacher 8A attempts to decide 8B request -> 403 Forbidden!
+      const decideRes = await decideApprovalRoute(
+        new NextRequest(
+          `http://localhost:3000/api/schools/${p5School._id}/approvals/${req8B._id}/decide`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'approve',
+            }),
+          }
+        ),
+        { params: Promise.resolve({ schoolId: String(p5School._id), requestId: String(req8B._id) }) }
+      );
+      expect(decideRes.status).toBe(403);
+
+      // Teacher 8A cannot list students of class 8B -> 403 Forbidden
+      const studentListRes = await listStudentsRoute(
+        new NextRequest(
+          `http://localhost:3000/api/schools/${p5School._id}/students?className=8&section=B`
+        ),
+        { params: Promise.resolve({ schoolId: String(p5School._id) }) }
+      );
+      expect(studentListRes.status).toBe(403);
+    });
+
+    it('3. Guard cannot mark leftWithStudent while pending or rejected', async () => {
+      const visitor = await Visitor.create({
+        schoolId: p5School._id,
+        name: 'Relative',
+        phone: '9877000002',
+      });
+      const visit = await Visit.create({
+        schoolId: p5School._id,
+        clientId: 'visit-guard-block',
+        visitorId: visitor._id,
+        studentIds: [student8A._id],
+        purpose: 'Pickup',
+        isApproved: false,
+        pickupBlocked: true,
+        reasonCode: 'Relative',
+        checkedInBy: guardUser._id,
+        entryAt: new Date(),
+      });
+      const reqDoc = await ApprovalRequest.create({
+        schoolId: p5School._id,
+        visitId: visit._id,
+        studentId: student8A._id,
+        visitorId: visitor._id,
+        teacherId: teacher8A._id,
+        status: 'pending',
+        requestedBy: guardUser._id,
+      });
+
+      // Guard attempts exit with leftWithStudent: true -> 400 blocked!
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guardUser._id),
+          phone: guardUser.phone,
+          role: 'guard',
+          schoolIds: [String(p5School._id)],
+          tokenVersion: 0,
+        },
+      });
+
+      const exitPendingRes = await markVisitExitRoute(
+        new NextRequest(
+          `http://localhost:3000/api/gate/visits/${visit._id}/exit`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              schoolId: String(p5School._id),
+              leftWithStudent: true,
+            }),
+          }
+        ),
+        { params: Promise.resolve({ visitId: String(visit._id) }) }
+      );
+      expect(exitPendingRes.status).toBe(400);
+
+      // Teacher rejects
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(teacher8A._id),
+          phone: teacher8A.phone,
+          role: 'teacher',
+          schoolIds: [String(p5School._id)],
+          classAssignments: [
+            { schoolId: String(p5School._id), className: '8', section: 'A' },
+          ],
+          tokenVersion: 0,
+        },
+      });
+      await decideApprovalRoute(
+        new NextRequest(
+          `http://localhost:3000/api/schools/${p5School._id}/approvals/${reqDoc._id}/decide`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'reject',
+              note: 'Parent explicitly refused permission on phone call',
+            }),
+          }
+        ),
+        { params: Promise.resolve({ schoolId: String(p5School._id), requestId: String(reqDoc._id) }) }
+      );
+
+      // Guard tries exit again -> still 400 blocked!
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guardUser._id),
+          phone: guardUser.phone,
+          role: 'guard',
+          schoolIds: [String(p5School._id)],
+          tokenVersion: 0,
+        },
+      });
+      const exitRejectedRes = await markVisitExitRoute(
+        new NextRequest(
+          `http://localhost:3000/api/gate/visits/${visit._id}/exit`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              schoolId: String(p5School._id),
+              leftWithStudent: true,
+            }),
+          }
+        ),
+        { params: Promise.resolve({ visitId: String(visit._id) }) }
+      );
+      expect(exitRejectedRes.status).toBe(400);
+    });
+
+    it('4. Pending > 5 min -> escalated; principal can decide; teacher decision after escalation still allowed but logged', async () => {
+      const visitor = await Visitor.create({
+        schoolId: p5School._id,
+        name: 'Escalation Test Visitor',
+        phone: '9877000003',
+      });
+      const visit = await Visit.create({
+        schoolId: p5School._id,
+        clientId: 'visit-escalation-test',
+        visitorId: visitor._id,
+        studentIds: [student8A._id],
+        purpose: 'Pickup',
+        isApproved: false,
+        pickupBlocked: true,
+        reasonCode: 'Relative',
+        checkedInBy: guardUser._id,
+        entryAt: new Date(Date.now() - 7 * 60 * 1000),
+      });
+
+      // Request created 7 minutes ago (> 5 min escalation threshold)
+      const reqDoc = await ApprovalRequest.create({
+        schoolId: p5School._id,
+        visitId: visit._id,
+        studentId: student8A._id,
+        visitorId: visitor._id,
+        teacherId: teacher8A._id,
+        status: 'pending',
+        requestedBy: guardUser._id,
+        createdAt: new Date(Date.now() - 7 * 60 * 1000),
+      });
+
+      // Guard checks status -> triggers escalation
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guardUser._id),
+          phone: guardUser.phone,
+          role: 'guard',
+          schoolIds: [String(p5School._id)],
+          tokenVersion: 0,
+        },
+      });
+      const statusRes = await getApprovalStatusRoute(
+        new NextRequest(
+          `http://localhost:3000/api/gate/visits/${visit._id}/approval-status?schoolId=${p5School._id}`
+        ),
+        { params: Promise.resolve({ visitId: String(visit._id) }) }
+      );
+      expect(statusRes.status).toBe(200);
+      const statusData = await statusRes.json();
+      expect(statusData.status).toBe('escalated');
+
+      // Check DB request status is escalated
+      const updatedReq = await ApprovalRequest.findById(reqDoc._id);
+      expect(updatedReq?.status).toBe('escalated');
+
+      // Principal can decide escalated request
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(principalUser._id),
+          phone: principalUser.phone,
+          role: 'principal',
+          schoolIds: [String(p5School._id)],
+          tokenVersion: 0,
+        },
+      });
+      const listForPrincipalRes = await listApprovalsRoute(
+        new NextRequest(`http://localhost:3000/api/schools/${p5School._id}/approvals`),
+        { params: Promise.resolve({ schoolId: String(p5School._id) }) }
+      );
+      expect(listForPrincipalRes.status).toBe(200);
+
+      // Teacher decision after escalation is still allowed but logged
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(teacher8A._id),
+          phone: teacher8A.phone,
+          role: 'teacher',
+          schoolIds: [String(p5School._id)],
+          classAssignments: [
+            { schoolId: String(p5School._id), className: '8', section: 'A' },
+          ],
+          tokenVersion: 0,
+        },
+      });
+      const teacherDecideRes = await decideApprovalRoute(
+        new NextRequest(
+          `http://localhost:3000/api/schools/${p5School._id}/approvals/${reqDoc._id}/decide`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'approve',
+            }),
+          }
+        ),
+        { params: Promise.resolve({ schoolId: String(p5School._id), requestId: String(reqDoc._id) }) }
+      );
+      expect(teacherDecideRes.status).toBe(200);
+
+      // Verify audit log has wasEscalated: true
+      const auditLog = await AuditLog.findOne({
+        action: 'approval.approve',
+        entityId: reqDoc._id,
+      });
+      expect(auditLog).toBeDefined();
+      expect((auditLog?.metadata as any)?.wasEscalated).toBe(true);
+    });
+
+    it('5. "Add as approved guardian" -> next visit by same phone for that student is approved', async () => {
+      const visitorPhone = '9877000005';
+      const visitor = await Visitor.create({
+        schoolId: p5School._id,
+        name: 'Maternal Uncle',
+        phone: visitorPhone,
+      });
+      const visit = await Visit.create({
+        schoolId: p5School._id,
+        clientId: 'visit-guardian-link-test',
+        visitorId: visitor._id,
+        studentIds: [student8A._id],
+        purpose: 'Pickup',
+        isApproved: false,
+        pickupBlocked: true,
+        reasonCode: 'Relative',
+        checkedInBy: guardUser._id,
+        entryAt: new Date(),
+      });
+      const reqDoc = await ApprovalRequest.create({
+        schoolId: p5School._id,
+        visitId: visit._id,
+        studentId: student8A._id,
+        visitorId: visitor._id,
+        teacherId: teacher8A._id,
+        status: 'pending',
+        requestedBy: guardUser._id,
+      });
+
+      // Teacher approves with addAsApprovedGuardian: true
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(teacher8A._id),
+          phone: teacher8A.phone,
+          role: 'teacher',
+          schoolIds: [String(p5School._id)],
+          classAssignments: [
+            { schoolId: String(p5School._id), className: '8', section: 'A' },
+          ],
+          tokenVersion: 0,
+        },
+      });
+      const approveRes = await decideApprovalRoute(
+        new NextRequest(
+          `http://localhost:3000/api/schools/${p5School._id}/approvals/${reqDoc._id}/decide`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'approve',
+              addAsApprovedGuardian: true,
+            }),
+          }
+        ),
+        { params: Promise.resolve({ schoolId: String(p5School._id), requestId: String(reqDoc._id) }) }
+      );
+      expect(approveRes.status).toBe(200);
+
+      // Verify GuardianLink created
+      const link = await GuardianLink.findOne({
+        studentId: student8A._id,
+        phone: visitorPhone,
+        isApproved: true,
+      });
+      expect(link).toBeDefined();
+
+      // Next visit by same phone for this student is now automatically approved!
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guardUser._id),
+          phone: guardUser.phone,
+          role: 'guard',
+          schoolIds: [String(p5School._id)],
+          tokenVersion: 0,
+        },
+      });
+      const secondVisitRes = await createGateVisitRoute(
+        new NextRequest('http://localhost:3000/api/gate/visits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schoolId: String(p5School._id),
+            clientId: 'client-second-visit-' + Math.random(),
+            phone: visitorPhone,
+            name: 'Maternal Uncle',
+            studentIds: [String(student8A._id)],
+            purpose: 'Pickup',
+          }),
+        })
+      );
+      expect(secondVisitRes.status).toBe(201);
+      const secondData = await secondVisitRes.json();
+      expect(secondData.visit.isApproved).toBe(true);
+      expect(secondData.visit.pickupBlocked).toBe(false);
+      expect(secondData.approvalRequests).toHaveLength(0);
+    });
+
+    it('6. Push failure does not break request creation', async () => {
+      // Add a dummy push subscription with dummy endpoint
+      await PushSubscription.create({
+        userId: teacher8A._id,
+        schoolId: p5School._id,
+        endpoint: 'https://invalid-push-endpoint-simulation.local/sub',
+        p256dh: 'invalid-key',
+        auth: 'invalid-auth',
+      });
+
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guardUser._id),
+          phone: guardUser.phone,
+          role: 'guard',
+          schoolIds: [String(p5School._id)],
+          tokenVersion: 0,
+        },
+      });
+
+      // Submit unapproved pickup — should succeed despite push failure
+      const res = await createGateVisitRoute(
+        new NextRequest('http://localhost:3000/api/gate/visits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schoolId: String(p5School._id),
+            clientId: 'client-push-fail-test',
+            phone: '9877000099',
+            name: 'New Relative',
+            studentIds: [String(student8A._id)],
+            purpose: 'Pickup',
+            reasonCode: 'Relative',
+          }),
+        })
+      );
+
+      expect(res.status).toBe(201);
+      const data = await res.json();
+      expect(data.visit).toBeDefined();
+      expect(data.approvalRequests).toHaveLength(1);
+    });
   });
 });
