@@ -9,6 +9,10 @@ import { Student } from '@/models/Student';
 import { Visitor } from '@/models/Visitor';
 import { GuardianLink } from '@/models/GuardianLink';
 import { Visit, UNAPPROVED_REASON_CODES } from '@/models/Visit';
+import { School } from '@/models/School';
+import { User } from '@/models/User';
+import { ApprovalRequest } from '@/models/ApprovalRequest';
+import { sendNotificationToUser, sendNotificationToSchoolPrincipals } from '@/lib/push';
 
 export async function POST(req: NextRequest) {
   try {
@@ -151,6 +155,11 @@ export async function POST(req: NextRequest) {
       ? new Types.ObjectId(user.id)
       : new Types.ObjectId();
 
+    const school = await School.findById(schoolObjectId).lean();
+    const teacherApprovalFor = school?.teacherApprovalFor ?? 'pickup';
+    const isPickup = body.purpose === 'Pickup';
+    const requiresApproval = !isApproved && (teacherApprovalFor === 'all_flagged' || isPickup);
+
     try {
       const createdVisit = await Visit.create({
         schoolId: schoolObjectId,
@@ -164,9 +173,84 @@ export async function POST(req: NextRequest) {
         reasonText: isApproved ? undefined : body.reasonText?.trim(),
         entryAt: new Date(),
         exitAt: null,
+        leftWithStudent: false,
+        pickupBlocked: requiresApproval,
         autoClosed: false,
         checkedInBy: checkedInByObjectId,
       });
+
+      const approvalRequests: any[] = [];
+      if (requiresApproval) {
+        for (const sId of studentObjectIds) {
+          const student = await Student.findById(sId).lean();
+          if (!student) continue;
+
+          // Route to the class teacher of this student
+          const teacher = await User.findOne({
+            schoolIds: schoolObjectId,
+            role: 'teacher',
+            isActive: true,
+            classAssignments: {
+              $elemMatch: {
+                schoolId: schoolObjectId,
+                className: student.className,
+                section: student.section,
+              },
+            },
+          }).lean();
+
+          const reqDoc = await ApprovalRequest.create({
+            schoolId: schoolObjectId,
+            visitId: createdVisit._id,
+            studentId: student._id,
+            visitorId: visitor._id,
+            teacherId: teacher ? teacher._id : null,
+            status: 'pending',
+            requestedBy: checkedInByObjectId,
+          });
+
+          approvalRequests.push({
+            ...reqDoc.toObject(),
+            teacherName: teacher?.name ?? null,
+            studentName: student.name,
+            className: student.className,
+            section: student.section,
+          });
+
+          await writeAuditLog({
+            schoolId: schoolObjectId,
+            userId: checkedInByObjectId,
+            action: 'approval.request',
+            entityType: 'ApprovalRequest',
+            entityId: reqDoc._id,
+            metadata: {
+              visitId: String(createdVisit._id),
+              studentId: String(student._id),
+              teacherId: teacher ? String(teacher._id) : null,
+              purpose: createdVisit.purpose,
+            },
+          });
+
+          // Web Push notification (non-blocking)
+          try {
+            if (teacher) {
+              await sendNotificationToUser(teacher._id, {
+                title: 'Visitor Approval Required',
+                body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
+                url: '/teacher',
+              });
+            } else {
+              await sendNotificationToSchoolPrincipals(schoolObjectId, {
+                title: 'Visitor Approval Required (No Teacher)',
+                body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
+                url: '/dashboard',
+              });
+            }
+          } catch (pushErr) {
+            console.warn('[Push] Error sending push for approval request:', pushErr);
+          }
+        }
+      }
 
       await writeAuditLog({
         schoolId: schoolObjectId,
@@ -180,13 +264,14 @@ export async function POST(req: NextRequest) {
           studentIds: uniqueStudentIds,
           purpose: createdVisit.purpose,
           isApproved,
+          pickupBlocked: createdVisit.pickupBlocked,
           reasonCode: createdVisit.reasonCode ?? null,
           reasonText: createdVisit.reasonText ?? null,
         },
       });
 
       return NextResponse.json(
-        { visit: createdVisit, idempotent: false },
+        { visit: createdVisit, approvalRequests, idempotent: false },
         { status: 201 }
       );
     } catch (err) {
