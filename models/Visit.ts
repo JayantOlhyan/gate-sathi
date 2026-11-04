@@ -38,6 +38,7 @@ export interface IVisit extends Document {
   entryAt: Date;
   exitAt: Date | null;
   leftWithStudent?: boolean;
+  pickupBlocked?: boolean;
   autoClosed: boolean;
   checkedInBy: Types.ObjectId;
   checkedOutBy?: Types.ObjectId;
@@ -104,6 +105,10 @@ const VisitSchema = new Schema<IVisit>(
       default: null,
     },
     leftWithStudent: {
+      type: Boolean,
+      default: false,
+    },
+    pickupBlocked: {
       type: Boolean,
       default: false,
     },
