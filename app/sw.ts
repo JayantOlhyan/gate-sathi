@@ -19,7 +19,7 @@ declare global {
 declare const self: ServiceWorkerGlobalScope;
 
 const AUTH_AND_APP_PAGE_REGEX =
-  /^\/(gate|dashboard|students|admin|app|login)(\/|$)/;
+  /^\/(gate|dashboard|students|admin|app|login|teacher)(\/|$)/;
 
 const runtimeCaching: RuntimeCaching[] = [
   // 1. NetworkOnly for all /api routes
@@ -106,3 +106,47 @@ const serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  try {
+    const payload = event.data.json();
+    const title = payload.title || 'GateSathi Notification';
+    const options: NotificationOptions = {
+      body: payload.body || '',
+      icon: payload.icon || '/icons/icon-192.png',
+      badge: '/icons/favicon-32.png',
+      data: {
+        url: payload.url || '/teacher',
+      },
+    };
+    event.waitUntil(self.registration.showNotification(title, options));
+  } catch {
+    const text = event.data.text();
+    event.waitUntil(
+      self.registration.showNotification('GateSathi', {
+        body: text,
+        icon: '/icons/icon-192.png',
+      })
+    );
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const urlToOpen = (event.notification.data as any)?.url || '/teacher';
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        for (const client of windowClients) {
+          if (client.url.includes(urlToOpen) && 'focus' in client) {
+            return client.focus();
+          }
+        }
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(urlToOpen);
+        }
+      })
+  );
+});
