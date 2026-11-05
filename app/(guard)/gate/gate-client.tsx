@@ -14,6 +14,11 @@ import {
   type UnapprovedReasonCode,
 } from '@/models/Visit';
 import { gatePurposes, type GatePurpose } from '@/lib/validations';
+import {
+  enqueueOfflineVisit,
+  getOfflineVisitsCount,
+  syncOfflineVisits,
+} from '@/lib/offline-queue';
 
 const CONSENT_VERSION = 'v1.1';
 
@@ -67,8 +72,13 @@ export function GateClient({
   const [visitorName, setVisitorName] = useState('');
   const [relation, setRelation] = useState<GuardianRelation>('Father');
   const [photoKey, setPhotoKey] = useState<string | null>(null);
+  const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  // Offline queue state
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Students selection
   const [linkedStudents, setLinkedStudents] = useState<LinkedStudentItem[]>([]);
@@ -98,6 +108,8 @@ export function GateClient({
     'pending' | 'escalated' | 'approved' | 'rejected' | 'expired'
   >('pending');
   const [approvingTeacherName, setApprovingTeacherName] = useState<string>('');
+  const [decidedByName, setDecidedByName] = useState<string | null>(null);
+  const [decidedAt, setDecidedAt] = useState<string | null>(null);
   const [teacherNotes, setTeacherNotes] = useState<string[]>([]);
 
   const resetToStart = () => {
@@ -110,6 +122,7 @@ export function GateClient({
     setVisitorName('');
     setRelation('Father');
     setPhotoKey(null);
+    setPhotoBlob(null);
     setPhotoPreviewUrl(null);
     setLinkedStudents([]);
     setSelectedStudents(new Map());
@@ -125,8 +138,42 @@ export function GateClient({
     setSavedVisitId(null);
     setApprovalStatus('pending');
     setApprovingTeacherName('');
+    setDecidedByName(null);
+    setDecidedAt(null);
     setTeacherNotes([]);
   };
+
+  // Offline sync listeners and periodic check
+  useEffect(() => {
+    let cancelled = false;
+    getOfflineVisitsCount().then((count) => {
+      if (!cancelled) setPendingSyncCount(count);
+    });
+
+    const triggerSync = async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        setIsSyncing(true);
+        try {
+          const { remaining } = await syncOfflineVisits();
+          if (!cancelled) setPendingSyncCount(remaining);
+        } finally {
+          if (!cancelled) setIsSyncing(false);
+        }
+      }
+    };
+
+    triggerSync();
+
+    const handleOnline = () => {
+      triggerSync();
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
 
   // Poll approval status when waiting for teacher
   useEffect(() => {
@@ -146,6 +193,12 @@ export function GateClient({
         }
         if (data.teacherName) {
           setApprovingTeacherName(data.teacherName);
+        }
+        if (data.decidedByName) {
+          setDecidedByName(data.decidedByName);
+        }
+        if (data.decidedAt) {
+          setDecidedAt(data.decidedAt);
         }
         if (data.notes && Array.isArray(data.notes)) {
           setTeacherNotes(data.notes);
@@ -299,32 +352,34 @@ export function GateClient({
         fileType: 'image/jpeg',
       });
 
+      setPhotoBlob(compressed);
       const localPreview = URL.createObjectURL(compressed);
       setPhotoPreviewUrl(localPreview);
 
-      const signRes = await fetch('/api/uploads/sign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          schoolId,
-          contentType: 'image/jpeg',
-          contentLength: compressed.size,
-        }),
-      });
-      const signData = await signRes.json();
-      if (!signRes.ok) {
-        setErrorMsg(signData.error ?? 'Failed to sign photo upload');
-        return;
+      try {
+        const signRes = await fetch('/api/uploads/sign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schoolId,
+            contentType: 'image/jpeg',
+            contentLength: compressed.size,
+          }),
+        });
+        const signData = await signRes.json();
+        if (signRes.ok && signData.uploadUrl) {
+          await fetch(signData.uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'image/jpeg' },
+            body: compressed,
+          }).catch(() => undefined);
+
+          setPhotoKey(signData.photoKey);
+        }
+      } catch (uploadErr) {
+        // Offline or preview fallback: photo blob will be queued in IndexedDB and uploaded during sync
+        console.warn('[Gate] Offline during photo upload; will sync via queue:', uploadErr);
       }
-
-      // Attempt PUT to presigned R2 URL (gracefully keep photoKey in dev/preview if bucket is offline)
-      await fetch(signData.uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'image/jpeg' },
-        body: compressed,
-      }).catch(() => undefined);
-
-      setPhotoKey(signData.photoKey);
     } catch {
       setErrorMsg('Photo compression or upload failed');
     } finally {
@@ -354,28 +409,47 @@ export function GateClient({
     if (!purpose) return;
 
     setSubmitting(true);
+    const visitPayload = {
+      schoolId,
+      clientId,
+      phone: phone.trim(),
+      name: visitorName.trim(),
+      relation,
+      photoKey: photoKey ?? undefined,
+      consentAt: consentAt ?? undefined,
+      consentVersion: consentAt ? CONSENT_VERSION : undefined,
+      studentIds: selectedIds,
+      purpose,
+      purposeNote: purpose === 'Other' ? purposeNote.trim() : undefined,
+      reasonCode: !isAllSelectedApproved && reasonCode ? reasonCode : undefined,
+      reasonText:
+        !isAllSelectedApproved && reasonText.trim()
+          ? reasonText.trim()
+          : undefined,
+    };
+
+    // If offline, store in IndexedDB and proceed immediately
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      await enqueueOfflineVisit({
+        clientId,
+        schoolId,
+        payload: visitPayload,
+        photoBlob,
+        createdAt: Date.now(),
+      });
+      const count = await getOfflineVisitsCount();
+      setPendingSyncCount(count);
+      setConfirmUnapprovedPickup(false);
+      setStep('confirmed');
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const res = await fetch('/api/gate/visits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          schoolId,
-          clientId,
-          phone: phone.trim(),
-          name: visitorName.trim(),
-          relation,
-          photoKey: photoKey ?? undefined,
-          consentAt: consentAt ?? undefined,
-          consentVersion: consentAt ? CONSENT_VERSION : undefined,
-          studentIds: selectedIds,
-          purpose,
-          purposeNote: purpose === 'Other' ? purposeNote.trim() : undefined,
-          reasonCode: !isAllSelectedApproved && reasonCode ? reasonCode : undefined,
-          reasonText:
-            !isAllSelectedApproved && reasonText.trim()
-              ? reasonText.trim()
-              : undefined,
-        }),
+        body: JSON.stringify(visitPayload),
       });
 
       const data = await res.json();
@@ -406,7 +480,22 @@ export function GateClient({
 
       setStep('confirmed');
     } catch {
-      setErrorMsg('Network error saving visit');
+      // Network drop mid-request: save safely to IndexedDB
+      try {
+        await enqueueOfflineVisit({
+          clientId,
+          schoolId,
+          payload: visitPayload,
+          photoBlob,
+          createdAt: Date.now(),
+        });
+        const count = await getOfflineVisitsCount();
+        setPendingSyncCount(count);
+        setConfirmUnapprovedPickup(false);
+        setStep('confirmed');
+      } catch {
+        setErrorMsg('Network error saving visit');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -450,6 +539,7 @@ export function GateClient({
     const isApproved = approvalStatus === 'approved';
     const isRejected = approvalStatus === 'rejected';
     const isEscalated = approvalStatus === 'escalated';
+    const isExpired = approvalStatus === 'expired';
 
     return (
       <Card
@@ -458,6 +548,8 @@ export function GateClient({
             ? 'border-emerald-500 bg-emerald-50'
             : isRejected
             ? 'border-red-500 bg-red-50'
+            : isExpired
+            ? 'border-slate-500 bg-slate-50'
             : isEscalated
             ? 'border-amber-500 bg-amber-50'
             : 'border-blue-500 bg-blue-50'
@@ -470,9 +562,14 @@ export function GateClient({
                 ✓
               </div>
               <h2 className="text-lg font-bold text-emerald-950">
-                {t('approvedHeading')} {approvingTeacherName || 'Teacher'}
+                {t('approvedHeading')} {decidedByName || approvingTeacherName || 'Teacher'}
               </h2>
               <p className="text-xs text-emerald-800">{t('approvedSub')}</p>
+              {decidedAt && (
+                <p className="text-[11px] text-emerald-700 font-medium">
+                  मंज़ूरी समय: {new Date(decidedAt).toLocaleTimeString('hi-IN', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              )}
               {teacherNotes.length > 0 && (
                 <div className="rounded border border-emerald-200 bg-white/80 p-2.5 text-xs text-emerald-900">
                   <span className="font-semibold">{t('teacherNoteLabel')}:</span>{' '}
@@ -498,6 +595,16 @@ export function GateClient({
               <p className="text-xs font-semibold text-red-800">
                 {t('rejectedSub')}
               </p>
+              {decidedByName && (
+                <p className="text-xs text-red-900 font-medium">
+                  अस्वीकार किया: {decidedByName}
+                </p>
+              )}
+              {decidedAt && (
+                <p className="text-[11px] text-red-700">
+                  समय: {new Date(decidedAt).toLocaleTimeString('hi-IN', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              )}
               {teacherNotes.length > 0 && (
                 <div className="rounded border border-red-200 bg-white/80 p-2.5 text-xs text-red-900">
                   <span className="font-semibold">{t('teacherNoteLabel')}:</span>{' '}
@@ -511,6 +618,29 @@ export function GateClient({
                 type="button"
                 variant="destructive"
                 className="mt-4 w-full"
+                onClick={resetToStart}
+              >
+                {t('backToGateBtn')}
+              </Button>
+            </>
+          ) : isExpired ? (
+            <>
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-700 text-2xl font-bold text-white shadow">
+                ⏱
+              </div>
+              <h2 className="text-lg font-bold text-slate-900">
+                {t('expiredHeading')}
+              </h2>
+              <p className="text-xs font-semibold text-slate-700">
+                {t('expiredSub')}
+              </p>
+              <p className="text-[11px] text-red-700 font-medium">
+                सुरक्षा नियम: छात्र को गेट से बाहर जाने की अनुमति नहीं है।
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-4 w-full border-slate-400"
                 onClick={resetToStart}
               >
                 {t('backToGateBtn')}
@@ -590,6 +720,40 @@ export function GateClient({
           className="rounded-md border-2 border-amber-400 bg-amber-200 px-3 py-2 text-center text-xs font-extrabold tracking-wide text-amber-950 shadow-sm"
         >
           TEST MODE — OTP 000000
+        </div>
+      )}
+
+      {/* Offline Sync Status Badge */}
+      {pendingSyncCount > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-base">☁️</span>
+            <div>
+              <p className="font-bold">
+                {pendingSyncCount} प्रविष्टियाँ सिंक की प्रतीक्षा में ({pendingSyncCount} entries waiting to sync)
+              </p>
+              <p className="text-[11px] text-amber-700">
+                इंटरनेट उपलब्ध होते ही स्वतः सिंक हो जाएंगी
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            disabled={isSyncing}
+            onClick={async () => {
+              setIsSyncing(true);
+              try {
+                const { remaining } = await syncOfflineVisits();
+                setPendingSyncCount(remaining);
+              } finally {
+                setIsSyncing(false);
+              }
+            }}
+            className="h-7 bg-amber-700 hover:bg-amber-800 text-[11px] text-white"
+          >
+            {isSyncing ? 'सिंक हो रहा है...' : 'सिंक करें (Sync)'}
+          </Button>
         </div>
       )}
 

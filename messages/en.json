@@ -159,6 +159,8 @@
     "approvedSub": "Teacher has verified and approved the pickup.",
     "rejectedHeading": "Do Not Release The Child",
     "rejectedSub": "Pickup rejected by teacher.",
+    "expiredHeading": "Expired — call office",
+    "expiredSub": "Approval request has expired. Please contact the school office or principal.",
     "teacherNoteLabel": "Teacher's Note",
     "nextEntryBtn": "Next Entry",
     "backToGateBtn": "Back to Gate",
