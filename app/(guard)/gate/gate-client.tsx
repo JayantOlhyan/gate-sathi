@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import imageCompression from 'browser-image-compression';
@@ -18,6 +18,11 @@ import {
   enqueueOfflineVisit,
   getOfflineVisitsCount,
   syncOfflineVisits,
+  getFailedVisits,
+  retryFailedVisit,
+  dismissFailedVisit,
+  type FailedVisitRecord,
+  type OfflineVisitPayload,
 } from '@/lib/offline-queue';
 
 const CONSENT_VERSION = 'v1.1';
@@ -47,7 +52,8 @@ type GateStep =
   | 'consent'
   | 'entry'
   | 'waiting_teacher'
-  | 'confirmed';
+  | 'confirmed'
+  | 'offline_blocked';
 
 export function GateClient({
   schoolId,
@@ -79,6 +85,10 @@ export function GateClient({
   // Offline queue state
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [failedVisits, setFailedVisits] = useState<FailedVisitRecord[]>([]);
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState(false);
+  const [offlineBlockedPayload, setOfflineBlockedPayload] =
+    useState<OfflineVisitPayload | null>(null);
 
   // Students selection
   const [linkedStudents, setLinkedStudents] = useState<LinkedStudentItem[]>([]);
@@ -141,7 +151,29 @@ export function GateClient({
     setDecidedByName(null);
     setDecidedAt(null);
     setTeacherNotes([]);
+    setOfflineBlockedPayload(null);
   };
+
+  const refreshCounts = useCallback(async () => {
+    const pending = await getOfflineVisitsCount();
+    const failed = await getFailedVisits();
+    setPendingSyncCount(pending);
+    setFailedVisits(failed);
+  }, []);
+
+  const handleManualSync = useCallback(async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const res = await syncOfflineVisits();
+      setPendingSyncCount(res.remaining);
+      setSessionExpiredNotice(Boolean(res.sessionExpired));
+      const failed = await getFailedVisits();
+      setFailedVisits(failed);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSyncing]);
 
   // Offline sync listeners and periodic check
   useEffect(() => {
@@ -149,13 +181,21 @@ export function GateClient({
     getOfflineVisitsCount().then((count) => {
       if (!cancelled) setPendingSyncCount(count);
     });
+    getFailedVisits().then((failed) => {
+      if (!cancelled) setFailedVisits(failed);
+    });
 
     const triggerSync = async () => {
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         setIsSyncing(true);
         try {
-          const { remaining } = await syncOfflineVisits();
-          if (!cancelled) setPendingSyncCount(remaining);
+          const res = await syncOfflineVisits();
+          if (!cancelled) {
+            setPendingSyncCount(res.remaining);
+            setSessionExpiredNotice(Boolean(res.sessionExpired));
+            const failed = await getFailedVisits();
+            setFailedVisits(failed);
+          }
         } finally {
           if (!cancelled) setIsSyncing(false);
         }
@@ -409,7 +449,8 @@ export function GateClient({
     if (!purpose) return;
 
     setSubmitting(true);
-    const visitPayload = {
+    const isUnapprovedPickup = purpose === 'Pickup' && !isAllSelectedApproved;
+    const visitPayload: OfflineVisitPayload = {
       schoolId,
       clientId,
       phone: phone.trim(),
@@ -426,10 +467,18 @@ export function GateClient({
         !isAllSelectedApproved && reasonText.trim()
           ? reasonText.trim()
           : undefined,
+      entryAt: new Date().toISOString(),
     };
 
-    // If offline, store in IndexedDB and proceed immediately
+    // If offline, check child safety rule
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (isUnapprovedPickup) {
+        setOfflineBlockedPayload(visitPayload);
+        setStep('offline_blocked');
+        setSubmitting(false);
+        return;
+      }
+
       await enqueueOfflineVisit({
         clientId,
         schoolId,
@@ -437,8 +486,7 @@ export function GateClient({
         photoBlob,
         createdAt: Date.now(),
       });
-      const count = await getOfflineVisitsCount();
-      setPendingSyncCount(count);
+      await refreshCounts();
       setConfirmUnapprovedPickup(false);
       setStep('confirmed');
       setSubmitting(false);
@@ -480,21 +528,25 @@ export function GateClient({
 
       setStep('confirmed');
     } catch {
-      // Network drop mid-request: save safely to IndexedDB
-      try {
-        await enqueueOfflineVisit({
-          clientId,
-          schoolId,
-          payload: visitPayload,
-          photoBlob,
-          createdAt: Date.now(),
-        });
-        const count = await getOfflineVisitsCount();
-        setPendingSyncCount(count);
-        setConfirmUnapprovedPickup(false);
-        setStep('confirmed');
-      } catch {
-        setErrorMsg('Network error saving visit');
+      // Network drop mid-request: apply safety rule
+      if (isUnapprovedPickup) {
+        setOfflineBlockedPayload(visitPayload);
+        setStep('offline_blocked');
+      } else {
+        try {
+          await enqueueOfflineVisit({
+            clientId,
+            schoolId,
+            payload: visitPayload,
+            photoBlob,
+            createdAt: Date.now(),
+          });
+          await refreshCounts();
+          setConfirmUnapprovedPickup(false);
+          setStep('confirmed');
+        } catch {
+          setErrorMsg('Network error saving visit');
+        }
       }
     } finally {
       setSubmitting(false);
@@ -712,6 +764,67 @@ export function GateClient({
     );
   }
 
+  if (step === 'offline_blocked') {
+    return (
+      <Card className="border-4 border-red-600 bg-red-50 text-center shadow-lg">
+        <CardContent className="space-y-4 py-8">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-600 text-3xl font-extrabold text-white shadow">
+            ✕
+          </div>
+          <h2 className="text-base font-bold text-red-950 sm:text-lg">
+            {t('offlinePickupBlockedTitle')}
+          </h2>
+          <p className="text-xs font-semibold text-red-900 leading-relaxed">
+            {t('offlinePickupBlockedDesc')}
+          </p>
+          <div className="rounded border border-red-300 bg-white p-3 text-xs text-red-950">
+            <p className="font-bold text-red-800">
+              सुरक्षा नियम: छात्र को किसी भी परिस्थिति में अन-अप्रूव्ड विज़िटर के साथ न भेजें।
+            </p>
+            <p className="text-[11px] text-slate-600 mt-1">
+              विद्यालय कार्यालय या प्रधानाचार्य से मौखिक / फ़ोन सत्यापन प्राप्त करें।
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              className="w-full border-red-400 text-red-900 hover:bg-red-100"
+              onClick={resetToStart}
+            >
+              {t('backToGateBtn')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full text-xs text-slate-700 bg-red-100 hover:bg-red-200 border border-red-300"
+              onClick={async () => {
+                if (offlineBlockedPayload) {
+                  await enqueueOfflineVisit({
+                    clientId,
+                    schoolId,
+                    payload: {
+                      ...offlineBlockedPayload,
+                      pickupBlocked: true,
+                    },
+                    photoBlob,
+                    createdAt: Date.now(),
+                  });
+                  await refreshCounts();
+                  setStep('confirmed');
+                }
+              }}
+            >
+              {t('offlineLogAnywayBtn')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {mockOtpActive && (
@@ -720,6 +833,78 @@ export function GateClient({
           className="rounded-md border-2 border-amber-400 bg-amber-200 px-3 py-2 text-center text-xs font-extrabold tracking-wide text-amber-950 shadow-sm"
         >
           TEST MODE — OTP 000000
+        </div>
+      )}
+
+      {/* Session Expired Notice */}
+      {sessionExpiredNotice && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs font-semibold text-red-900 shadow-sm flex items-center justify-between">
+          <span>⚠️ {t('sessionExpiredWarning')}</span>
+          <Link
+            href="/login"
+            className="underline text-red-700 hover:text-red-900 text-xs ml-2 shrink-0 font-bold"
+          >
+            लॉग इन करें
+          </Link>
+        </div>
+      )}
+
+      {/* Failed Sync Items (Bug 3: NO SILENT LOSS) */}
+      {failedVisits.length > 0 && (
+        <div className="rounded-lg border-2 border-red-500 bg-red-50 p-3 text-xs text-red-950 shadow-sm space-y-2">
+          <div className="flex items-center gap-2 font-bold text-red-900 text-sm">
+            <span>⚠️</span>
+            <span>
+              {failedVisits.length}{' '}
+              {failedVisits.length === 1
+                ? 'प्रविष्टि सिंक विफल — कार्यालय को दिखाएं (1 entry failed to sync — show to office)'
+                : `${failedVisits.length} entries failed to sync — show to office`}
+            </span>
+          </div>
+          <div className="space-y-1.5">
+            {failedVisits.map((item) => (
+              <div
+                key={item.clientId}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded bg-white p-2.5 border border-red-200 text-xs"
+              >
+                <div>
+                  <p className="font-bold text-slate-900">
+                    {item.payload.name} ({item.payload.phone}) — {item.payload.purpose}
+                  </p>
+                  <p className="text-[11px] text-red-700 mt-0.5">
+                    त्रुटि (Error): {item.error}
+                  </p>
+                </div>
+                <div className="flex gap-1.5 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px] border-slate-300"
+                    onClick={async () => {
+                      await retryFailedVisit(item.clientId);
+                      await refreshCounts();
+                      handleManualSync();
+                    }}
+                  >
+                    {t('failedSyncRetry')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-[11px] text-slate-500 hover:text-red-700"
+                    onClick={async () => {
+                      await dismissFailedVisit(item.clientId);
+                      await refreshCounts();
+                    }}
+                  >
+                    {t('failedSyncDismiss')}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -741,15 +926,7 @@ export function GateClient({
             type="button"
             size="sm"
             disabled={isSyncing}
-            onClick={async () => {
-              setIsSyncing(true);
-              try {
-                const { remaining } = await syncOfflineVisits();
-                setPendingSyncCount(remaining);
-              } finally {
-                setIsSyncing(false);
-              }
-            }}
+            onClick={handleManualSync}
             className="h-7 bg-amber-700 hover:bg-amber-800 text-[11px] text-white"
           >
             {isSyncing ? 'सिंक हो रहा है...' : 'सिंक करें (Sync)'}

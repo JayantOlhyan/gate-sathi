@@ -46,6 +46,7 @@
     "eslint": "^9.22.0",
     "eslint-config-next": "^16.0.0",
     "eslint-config-prettier": "^10.1.1",
+    "fake-indexeddb": "^6.2.7",
     "mongodb-memory-server": "^11.3.0",
     "postcss": "^8.5.3",
     "prettier": "^3.5.3",

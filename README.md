@@ -112,6 +112,14 @@ Is visitor linked as approved guardian for ALL selected students?
 - When visitor leaves, guard taps **"अभी परिसर में (Inside Now)"** → marks exit timestamp with one tap.
 - If visitor never checks out, the hourly `close-visits` scheduled function automatically closes open visits when the school's IST closing time (`closingHourIst`, default 17:00) is reached, marking `autoClosed: true` and expiring any lingering unapproved requests.
 
+### Offline Entry Queue & Child Safety
+- **Child Safety First**: If the guard device is offline and an unlisted visitor requests student **Pickup**, GateSathi blocks the confirmation step and displays a red card: *"Offline — teacher approval not possible. Do not release the child. Call the office/principal."* (`offlinePickupBlockedTitle`). The guard may optionally log the record for audit purposes (`pickupBlocked: true`), but the student cannot be released until an approval is secured.
+- **Capture-Time Timestamps**: Queued offline visits record `entryAt` at the instant of capture. When synchronized, `/api/gate/visits` accepts `body.entryAt` after verifying it is not in the future (permitting 2 minutes clock skew) and not older than 24 hours, stamping `metadata.offlineSynced: true` on the `AuditLog`.
+- **Zero Silent Loss**:
+  - **Network / Photo Failures**: If the compressed photo upload to Cloudflare R2 fails during sync, the entry is retained in IndexedDB and re-attempted on the next sync cycle.
+  - **Session Expiration (401)**: The queue halts without losing entries, prompting the guard to re-authenticate.
+  - **Server Rejections (4xx/5xx)**: If rejected by the server, entries are transitioned to a dedicated `failed_visits` IndexedDB store with the error reason. The guard UI displays a *"1 entry failed to sync — show to office"* alert with single-tap Retry or Dismiss actions.
+
 ---
 
 ## 3. Notification & Outbox System

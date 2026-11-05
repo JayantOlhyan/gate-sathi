@@ -180,6 +180,7 @@ export const gateCreateVisitBodySchema = z.object({
   purposeNote: z.string().trim().optional(),
   reasonCode: z.enum(UNAPPROVED_REASON_CODES).optional(),
   reasonText: z.string().trim().optional(),
+  entryAt: z.coerce.date().optional(),
 });
 
 export const gateExitVisitBodySchema = z.object({

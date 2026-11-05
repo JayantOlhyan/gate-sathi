@@ -160,6 +160,23 @@ export async function POST(req: NextRequest) {
     const isPickup = body.purpose === 'Pickup';
     const requiresApproval = !isApproved && (teacherApprovalFor === 'all_flagged' || isPickup);
 
+    const now = new Date();
+    let finalEntryAt = now;
+    let offlineSynced = false;
+
+    if (body.entryAt) {
+      const entryTimeMs = body.entryAt.getTime();
+      const nowMs = now.getTime();
+      const twoMinutesMs = 2 * 60 * 1000;
+      const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+
+      // Accept body.entryAt only if not in the future (allow 2 min clock skew) and not older than 24h
+      if (entryTimeMs <= nowMs + twoMinutesMs && entryTimeMs >= nowMs - twentyFourHoursMs) {
+        finalEntryAt = body.entryAt;
+        offlineSynced = true;
+      }
+    }
+
     try {
       const createdVisit = await Visit.create({
         schoolId: schoolObjectId,
@@ -171,7 +188,7 @@ export async function POST(req: NextRequest) {
         isApproved,
         reasonCode: isApproved ? undefined : body.reasonCode,
         reasonText: isApproved ? undefined : body.reasonText?.trim(),
-        entryAt: new Date(),
+        entryAt: finalEntryAt,
         exitAt: null,
         leftWithStudent: false,
         pickupBlocked: requiresApproval,
@@ -295,6 +312,7 @@ export async function POST(req: NextRequest) {
           pickupBlocked: createdVisit.pickupBlocked,
           reasonCode: createdVisit.reasonCode ?? null,
           reasonText: createdVisit.reasonText ?? null,
+          ...(offlineSynced ? { offlineSynced: true } : {}),
         },
       });
 
