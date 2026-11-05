@@ -38,31 +38,36 @@ export async function POST(
       ? new Types.ObjectId(user.id)
       : new Types.ObjectId();
 
-    const approvalReq = await ApprovalRequest.findOne({
+    // 1. Initial check for existence and student details
+    const existingReq = await ApprovalRequest.findOne({
       _id: requestObjectId,
       schoolId: schoolObjectId,
-    });
+    }).lean();
 
-    if (!approvalReq) {
+    if (!existingReq) {
       return NextResponse.json({ error: 'Approval request not found' }, { status: 404 });
     }
 
-    if (approvalReq.status === 'expired') {
+    if (existingReq.status === 'expired') {
       return NextResponse.json(
-        { error: 'Cannot decide an expired approval request' },
-        { status: 400 }
+        {
+          error: 'Cannot decide an expired approval request',
+          status: 'expired',
+          decidedAt: existingReq.decidedAt,
+        },
+        { status: 409 }
       );
     }
 
     // Role and Class authorization
-    const student = await Student.findById(approvalReq.studentId).lean();
+    const student = await Student.findById(existingReq.studentId).lean();
     if (!student) {
       return NextResponse.json({ error: 'Student not found' }, { status: 404 });
     }
 
     if (user.role === 'teacher') {
       const isAssignedTeacher =
-        approvalReq.teacherId && String(approvalReq.teacherId) === String(user.id);
+        existingReq.teacherId && String(existingReq.teacherId) === String(user.id);
 
       const hasClassAssignment = (user.classAssignments || []).some(
         (ca) =>
@@ -79,28 +84,65 @@ export async function POST(
       }
     }
 
-    const wasEscalated = approvalReq.status === 'escalated';
+    const wasEscalated = existingReq.status === 'escalated';
     const newStatus = body.decision === 'approve' ? 'approved' : 'rejected';
+    const now = new Date();
 
-    approvalReq.status = newStatus;
-    approvalReq.decidedBy = callerObjectId;
-    approvalReq.decidedAt = new Date();
+    const updateFields: Record<string, unknown> = {
+      status: newStatus,
+      decidedBy: callerObjectId,
+      decidedAt: now,
+    };
     if (body.note) {
-      approvalReq.note = body.note.trim();
+      updateFields.note = body.note.trim();
     }
-    await approvalReq.save();
 
-    // Audit log for decision
+    // 2. Atomic findOneAndUpdate filtered on status in ['pending', 'escalated']
+    const updatedReq = await ApprovalRequest.findOneAndUpdate(
+      {
+        _id: requestObjectId,
+        schoolId: schoolObjectId,
+        status: { $in: ['pending', 'escalated'] },
+      },
+      {
+        $set: updateFields,
+      },
+      { new: true }
+    );
+
+    // If another caller already decided or expired it, return 409 Conflict with details
+    if (!updatedReq) {
+      const currentDoc = await ApprovalRequest.findOne({
+        _id: requestObjectId,
+        schoolId: schoolObjectId,
+      })
+        .populate('decidedBy', 'name role')
+        .lean();
+
+      return NextResponse.json(
+        {
+          error: `Request has already been finalized with status '${currentDoc?.status}'`,
+          status: currentDoc?.status,
+          decidedBy:
+            (currentDoc?.decidedBy as any)?.name ??
+            (currentDoc?.decidedBy ? String(currentDoc.decidedBy) : null),
+          decidedAt: currentDoc?.decidedAt ?? null,
+        },
+        { status: 409 }
+      );
+    }
+
+    // 3. Audit log for decision
     await writeAuditLog({
       schoolId: schoolObjectId,
       userId: callerObjectId,
       action: body.decision === 'approve' ? 'approval.approve' : 'approval.reject',
       entityType: 'ApprovalRequest',
-      entityId: approvalReq._id,
+      entityId: updatedReq._id,
       metadata: {
-        requestId: String(approvalReq._id),
-        visitId: String(approvalReq.visitId),
-        studentId: String(approvalReq.studentId),
+        requestId: String(updatedReq._id),
+        visitId: String(updatedReq.visitId),
+        studentId: String(updatedReq.studentId),
         decision: body.decision,
         wasEscalated,
         note: body.note ?? null,
@@ -108,35 +150,35 @@ export async function POST(
       },
     });
 
-    // If approved, check if all requests for this visit are approved
+    // 4. If approved, check if all requests for this visit are approved
     if (body.decision === 'approve') {
       const pendingCount = await ApprovalRequest.countDocuments({
-        visitId: approvalReq.visitId,
+        visitId: updatedReq.visitId,
         status: { $ne: 'approved' },
       });
 
       if (pendingCount === 0) {
-        await Visit.findByIdAndUpdate(approvalReq.visitId, {
+        await Visit.findByIdAndUpdate(updatedReq.visitId, {
           $set: { pickupBlocked: false },
         });
       }
 
       // Checkbox "Add as approved guardian"
       if (body.addAsApprovedGuardian) {
-        const visitor = await Visitor.findById(approvalReq.visitorId).lean();
+        const visitor = await Visitor.findById(updatedReq.visitorId).lean();
         const relation = visitor?.defaultRelation || 'Other';
 
         await GuardianLink.findOneAndUpdate(
           {
             schoolId: schoolObjectId,
-            visitorId: approvalReq.visitorId,
-            studentId: approvalReq.studentId,
+            visitorId: updatedReq.visitorId,
+            studentId: updatedReq.studentId,
           },
           {
             $set: {
               schoolId: schoolObjectId,
-              visitorId: approvalReq.visitorId,
-              studentId: approvalReq.studentId,
+              visitorId: updatedReq.visitorId,
+              studentId: updatedReq.studentId,
               approved: true,
               relation,
             },
@@ -152,15 +194,15 @@ export async function POST(
           metadata: {
             via: 'teacher',
             teacherId: String(callerObjectId),
-            studentId: String(approvalReq.studentId),
-            visitorId: String(approvalReq.visitorId),
+            studentId: String(updatedReq.studentId),
+            visitorId: String(updatedReq.visitorId),
             relation,
           },
         });
       }
     } else {
       // If rejected, ensure visit remains pickupBlocked
-      await Visit.findByIdAndUpdate(approvalReq.visitId, {
+      await Visit.findByIdAndUpdate(updatedReq.visitId, {
         $set: { pickupBlocked: true },
       });
     }
@@ -168,7 +210,7 @@ export async function POST(
     return NextResponse.json(
       {
         ok: true,
-        request: approvalReq,
+        request: updatedReq,
         decision: body.decision,
       },
       { status: 200 }

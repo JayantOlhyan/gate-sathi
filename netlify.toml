@@ -7,3 +7,6 @@
 
 [functions."close-visits"]
   schedule = "0 * * * *"
+
+[functions."notify-tick"]
+  schedule = "* * * * *"

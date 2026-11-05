@@ -18,7 +18,10 @@ Configure the following environment variables in **Netlify Site Settings → Env
 | `R2_ACCESS_KEY_ID` | Yes | R2 API token Access Key ID (with Object Read & Write permissions on the bucket). |
 | `R2_SECRET_ACCESS_KEY` | Yes | R2 API token Secret Access Key. |
 | `R2_BUCKET` | Yes | Private Cloudflare R2 bucket name (e.g., `gatesathi-private`). |
-| `CRON_SECRET` | Yes | Shared secret token required in `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret` header for `POST /api/cron/close-visits`. |
+| `CRON_SECRET` | Yes | Shared secret token required in `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret` header for scheduled/cron endpoints (`/api/cron/close-visits`, `/api/cron/notify-tick`). |
+| `VAPID_PUBLIC_KEY` | Yes (Push) | Application server public key for Web Push. Generate via `npx web-push generate-vapid-keys`. |
+| `VAPID_PRIVATE_KEY` | Yes (Push) | Application server private key for Web Push. Keep secret! |
+| `VAPID_SUBJECT` | Recommended | Contact email or URL for VAPID push payload headers (default: `mailto:support@gatesathi.in`). |
 
 ---
 
@@ -94,3 +97,21 @@ Expected response:
   "otpMode": "mock"
 }
 ```
+
+---
+
+## 6. Web Push (VAPID) Key Generation
+
+To generate VAPID keys for browser push notifications:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Copy the generated Public Key and Private Key into your environment / Netlify Site Settings:
+- `VAPID_PUBLIC_KEY=<Public Key>`
+- `VAPID_PRIVATE_KEY=<Private Key>`
+- `VAPID_SUBJECT=mailto:support@gatesathi.in`
+
+Note on Netlify: Scheduled functions (`close-visits` and `notify-tick`) execute automatically only on the published production deploy, not on deploy previews.
+

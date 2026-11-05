@@ -32,5 +32,14 @@ export {
   PushSubscription,
   type IPushSubscription,
 } from './PushSubscription';
+export {
+  Notification,
+  NOTIFICATION_TYPES,
+  NOTIFICATION_STATUSES,
+  type INotification,
+  type NotificationType,
+  type NotificationStatus,
+  type INotificationPayload,
+} from './Notification';
 
 

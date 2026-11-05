@@ -106,6 +106,20 @@ export function TeacherClient({
     return 'default';
   });
   const [pushLoading, setPushLoading] = useState(false);
+  const [isIOS] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    );
+  });
+  const [isStandalone] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return (
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true
+    );
+  });
 
   const handleSubscribePush = async () => {
     if (pushStatus === 'unsupported') return;
@@ -288,16 +302,39 @@ export function TeacherClient({
         </div>
       </div>
 
+      {/* iOS PWA Installation Banner */}
+      {isIOS && !isStandalone && (
+        <Card className="border border-amber-300 bg-amber-50 p-3 shadow-sm">
+          <div className="flex flex-col gap-1.5 text-xs">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900">
+              <span>📱</span>
+              <span>iPhone / iPad: होम स्क्रीन पर जोड़ना आवश्यक है (Install GateSathi)</span>
+            </div>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              Apple iOS पर विज़िटर सूचनाएं (Push Notifications) पाने के लिए GateSathi को Safari की होम स्क्रीन पर जोड़ना अनिवार्य है:
+            </p>
+            <ol className="list-decimal list-inside text-[11px] text-amber-800 space-y-0.5">
+              <li>Safari के नीचे <strong>शेयर (Share)</strong> बटन पर टैप करें।</li>
+              <li><strong>&apos;Add to Home Screen&apos; (होम स्क्रीन में जोड़ें)</strong> चुनें।</li>
+              <li>होम स्क्रीन पर बने <strong>GateSathi</strong> आइकन से खोलें और सूचनाएं चालू करें।</li>
+            </ol>
+            <p className="text-[10px] text-amber-700 italic">
+              (iOS requires installing GateSathi as a PWA to enable push notifications. Tap Share &rarr; Add to Home Screen, then open from Home Screen.)
+            </p>
+          </div>
+        </Card>
+      )}
+
       {/* Push Notification Bar */}
       {pushStatus !== 'subscribed' && (
-        <Card className="border border-blue-200 bg-blue-50/60 p-3">
+        <Card className="border border-blue-200 bg-blue-50/80 p-3 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs">
             <div>
-              <p className="font-semibold text-blue-950">
-                🔔 नए आगंतुक अनुरोधों के लिए तुरंत सूचना प्राप्त करें
+              <p className="font-bold text-blue-950">
+                🔔 विज़िटर पिकअप सूचनाएं चालू करें (Enable Visitor Notifications)
               </p>
-              <p className="text-[11px] text-blue-700">
-                iPhone उपयोगकर्ता: पहले Safari में &apos;Share &rarr; Add to Home Screen&apos; करें।
+              <p className="text-[11px] text-blue-700 mt-0.5">
+                गेट पर आए आगंतुक की तुरंत मंज़ूरी के लिए अपने फ़ोन पर सूचनाएं चालू करें।
               </p>
             </div>
             <Button
@@ -306,9 +343,9 @@ export function TeacherClient({
               variant="outline"
               disabled={pushLoading || pushStatus === 'unsupported'}
               onClick={handleSubscribePush}
-              className="h-8 shrink-0 bg-white text-xs font-semibold text-brand-blue border-blue-300 hover:bg-blue-100"
+              className="h-8 shrink-0 bg-brand-blue text-xs font-bold text-white hover:bg-brand-blue/90 border-transparent"
             >
-              {pushLoading ? 'चालू हो रहा है...' : 'सूचनाएं चालू करें'}
+              {pushLoading ? 'चालू हो रहा है...' : 'सूचनाएं चालू करें (Enable)'}
             </Button>
           </div>
         </Card>

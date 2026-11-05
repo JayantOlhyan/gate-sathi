@@ -7,7 +7,10 @@ import { objectIdSchema } from '@/lib/validations';
 import { Visit } from '@/models/Visit';
 import { ApprovalRequest } from '@/models/ApprovalRequest';
 import { User } from '@/models/User';
-import { checkAndEscalatePendingRequests } from '@/lib/escalate-approvals';
+import {
+  checkAndEscalatePendingRequests,
+  checkAndExpireStaleRequests,
+} from '@/lib/escalate-approvals';
 
 const paramsSchema = z.object({
   visitId: objectIdSchema,
@@ -35,12 +38,14 @@ export async function GET(
     const schoolId = String(visit.schoolId);
     await requireSchoolAccess(schoolId);
 
-    // Auto-escalate any pending requests for this school if expired > 5m
+    // Auto-escalate any pending requests for this school if expired > 5m, and expire stale requests
     await checkAndEscalatePendingRequests(schoolId);
+    await checkAndExpireStaleRequests(schoolId);
 
     const requests = await ApprovalRequest.find({ visitId: visitObjectId })
       .populate('teacherId', 'name phone')
       .populate('studentId', 'name className section rollNumber')
+      .populate('decidedBy', 'name role')
       .lean();
 
     if (requests.length === 0) {
@@ -87,6 +92,19 @@ export async function GET(
       )
     );
 
+    const decidedByNames = Array.from(
+      new Set(
+        requests
+          .map((r) => (r.decidedBy as any)?.name)
+          .filter((name): name is string => Boolean(name))
+      )
+    );
+
+    const latestDecidedAt = requests
+      .map((r) => r.decidedAt)
+      .filter((d): d is Date => Boolean(d))
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
+
     const notes = requests
       .map((r) => r.note?.trim())
       .filter((n): n is string => Boolean(n));
@@ -97,6 +115,8 @@ export async function GET(
         pickupBlocked: Boolean(visit.pickupBlocked),
         status: overallStatus,
         teacherName: teacherNames.length > 0 ? teacherNames.join(', ') : 'Principal (प्रधानाचार्य)',
+        decidedByName: decidedByNames.length > 0 ? decidedByNames.join(', ') : null,
+        decidedAt: latestDecidedAt,
         notes,
         requests: requests.map((r) => ({
           _id: String(r._id),
@@ -105,6 +125,7 @@ export async function GET(
           className: (r.studentId as any)?.className,
           section: (r.studentId as any)?.section,
           teacherName: (r.teacherId as any)?.name ?? null,
+          decidedByName: (r.decidedBy as any)?.name ?? null,
           note: r.note ?? null,
           decidedAt: r.decidedAt,
         })),

@@ -7,6 +7,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { handleApiError, requireRole, requireSchoolAccess } from '@/lib/rbac';
 import { teacherCreateBodySchema } from '@/lib/validations';
 import { User } from '@/models/User';
+import { PushSubscription } from '@/models/PushSubscription';
 
 const paramsSchema = z.object({
   schoolId: z.string().trim().min(1),
@@ -38,12 +39,19 @@ export async function GET(
       .sort({ name: 1 })
       .lean();
 
+    const teacherIds = teachers.map((t) => t._id);
+    const subscribedUserIds = await PushSubscription.distinct('userId', {
+      userId: { $in: teacherIds },
+    });
+    const subscribedSet = new Set(subscribedUserIds.map((id) => String(id)));
+
     return NextResponse.json(
       {
         schoolId,
         teachers: teachers.map((t) => ({
           ...t,
           _id: String(t._id),
+          hasPushSubscription: subscribedSet.has(String(t._id)),
           classAssignments: (t.classAssignments || []).filter(
             (ca) => String(ca.schoolId) === schoolId
           ),

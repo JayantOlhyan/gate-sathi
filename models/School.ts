@@ -10,6 +10,7 @@ export interface ISchool extends Document {
   closingHourIst: string;
   teacherApprovalFor: 'pickup' | 'all_flagged';
   teacherApprovalEscalationMinutes: number;
+  teacherApprovalExpiryMinutes: number;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -59,6 +60,10 @@ const SchoolSchema = new Schema<ISchool>(
     teacherApprovalEscalationMinutes: {
       type: Number,
       default: 5,
+    },
+    teacherApprovalExpiryMinutes: {
+      type: Number,
+      default: 30,
     },
     isActive: {
       type: Boolean,

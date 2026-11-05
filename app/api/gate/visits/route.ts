@@ -12,7 +12,7 @@ import { Visit, UNAPPROVED_REASON_CODES } from '@/models/Visit';
 import { School } from '@/models/School';
 import { User } from '@/models/User';
 import { ApprovalRequest } from '@/models/ApprovalRequest';
-import { sendNotificationToUser, sendNotificationToSchoolPrincipals } from '@/lib/push';
+import { notify } from '@/lib/push';
 
 export async function POST(req: NextRequest) {
   try {
@@ -231,23 +231,51 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          // Web Push notification (non-blocking)
+          // Web Push notification via outbox (non-blocking immediate attempt with 3s timeout)
           try {
             if (teacher) {
-              await sendNotificationToUser(teacher._id, {
-                title: 'Visitor Approval Required',
-                body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
-                url: '/teacher',
-              });
+              await notify(
+                teacher._id,
+                'approval_request',
+                {
+                  title: 'Visitor Approval Required',
+                  body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
+                  url: '/teacher',
+                },
+                `approval_request:${String(reqDoc._id)}:${String(teacher._id)}`,
+                {
+                  schoolId: schoolObjectId,
+                  fallbackToPrincipalsIfNoSub: true,
+                }
+              );
             } else {
-              await sendNotificationToSchoolPrincipals(schoolObjectId, {
-                title: 'Visitor Approval Required (No Teacher)',
-                body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
-                url: '/dashboard',
-              });
+              const principals = await User.find({
+                schoolIds: schoolObjectId,
+                role: 'principal',
+                isActive: true,
+              })
+                .select('_id')
+                .lean();
+
+              if (principals.length > 0) {
+                await notify(
+                  principals.map((p) => p._id),
+                  'approval_request',
+                  {
+                    title: 'Visitor Approval Required (No Teacher)',
+                    body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
+                    url: '/dashboard',
+                  },
+                  `approval_request:${String(reqDoc._id)}:no_teacher`,
+                  {
+                    schoolId: schoolObjectId,
+                    fallbackToPrincipalsIfNoSub: false,
+                  }
+                );
+              }
             }
           } catch (pushErr) {
-            console.warn('[Push] Error sending push for approval request:', pushErr);
+            console.warn('[Push] Error enqueuing push for approval request:', pushErr);
           }
         }
       }

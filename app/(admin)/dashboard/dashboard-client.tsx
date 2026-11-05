@@ -41,6 +41,7 @@ interface TeacherItem {
   name: string;
   phone: string;
   isActive: boolean;
+  hasPushSubscription?: boolean;
   classAssignments: Array<{ className: string; section: string }>;
 }
 
@@ -129,8 +130,9 @@ export function DashboardClient({ schoolId }: { schoolId: string }) {
     };
   }, [schoolId]);
 
+  // Load teachers on mount and when teacher tab active
   useEffect(() => {
-    if (activeTab !== 'teachers' || !schoolId) return;
+    if (!schoolId) return;
     let cancelled = false;
     const run = async () => {
       try {
@@ -147,7 +149,10 @@ export function DashboardClient({ schoolId }: { schoolId: string }) {
     };
 
     run();
-  }, [activeTab, schoolId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolId, activeTab]);
 
   const handleDecision = async (
     requestId: string,
@@ -301,6 +306,9 @@ export function DashboardClient({ schoolId }: { schoolId: string }) {
 
   const escalatedList = requests.filter((r) => r.status === 'escalated');
   const pendingList = requests.filter((r) => r.status === 'pending');
+  const teachersWithoutNotifications = teachers.filter(
+    (t) => t.isActive && !t.hasPushSubscription
+  );
 
   return (
     <div className="space-y-4">
@@ -320,6 +328,46 @@ export function DashboardClient({ schoolId }: { schoolId: string }) {
         >
           {successMsg}
         </p>
+      )}
+
+      {/* Alert: Teachers without notifications enabled */}
+      {teachersWithoutNotifications.length > 0 && (
+        <Card className="border border-amber-300 bg-amber-50/80 p-3 shadow-sm">
+          <div className="flex flex-col sm:flex-row items-start justify-between gap-3 text-xs">
+            <div>
+              <h4 className="font-bold text-amber-950 flex items-center gap-1.5">
+                <span>⚠️</span>
+                <span>
+                  सूचनाएं बंद वाले शिक्षक (Teachers without notifications enabled: {teachersWithoutNotifications.length})
+                </span>
+              </h4>
+              <p className="text-[11px] text-amber-800 mt-1">
+                इन शिक्षकों ने अभी तक वेब नोटिफ़िकेशन चालू नहीं किए हैं। इनके छात्रों के पिकअप अनुरोध सीधे प्रधानाचार्य के पास आएंगे:
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {teachersWithoutNotifications.map((t) => (
+                  <span
+                    key={t._id}
+                    className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-medium text-amber-900 border border-amber-200"
+                  >
+                    <strong>{t.name}</strong> ({t.classAssignments.map((a) => `${a.className}-${a.section}`).join(', ') || 'No Class'})
+                  </span>
+                ))}
+              </div>
+            </div>
+            {activeTab !== 'teachers' && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setActiveTab('teachers')}
+                className="h-7 shrink-0 text-[11px] border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+              >
+                शिक्षक सूची देखें
+              </Button>
+            )}
+          </div>
+        </Card>
       )}
 
       {/* Main Tabs */}
@@ -664,9 +712,18 @@ export function DashboardClient({ schoolId }: { schoolId: string }) {
                 <Card key={t._id} className="p-3 text-xs">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="font-bold text-slate-900">
-                        {t.name}{' '}
+                      <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                        <span>{t.name}</span>
                         <span className="font-normal text-slate-500">({t.phone})</span>
+                        {t.hasPushSubscription ? (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                            ✓ नोटिफ़िकेशन चालू
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                            ⚠️ नोटिफ़िकेशन बंद
+                          </span>
+                        )}
                       </h4>
                       <p className="text-slate-600 mt-0.5">
                         कक्षा आवंटन:{' '}

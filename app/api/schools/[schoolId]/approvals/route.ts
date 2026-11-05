@@ -9,7 +9,10 @@ import '@/models/Visitor';
 import '@/models/Visit';
 import '@/models/User';
 import { createPresignedGetUrl } from '@/lib/r2';
-import { checkAndEscalatePendingRequests } from '@/lib/escalate-approvals';
+import {
+  checkAndEscalatePendingRequests,
+  checkAndExpireStaleRequests,
+} from '@/lib/escalate-approvals';
 
 const paramsSchema = z.object({
   schoolId: z.string().trim().min(1),
@@ -33,8 +36,9 @@ export async function GET(
 
     const schoolObjectId = new Types.ObjectId(schoolId);
 
-    // Auto-escalate any pending requests past 5m
+    // Auto-escalate any pending requests past 5m, and expire stale requests
     await checkAndEscalatePendingRequests(schoolObjectId);
+    await checkAndExpireStaleRequests(schoolObjectId);
 
     const filter: Record<string, unknown> = {
       schoolId: schoolObjectId,
