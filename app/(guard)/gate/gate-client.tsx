@@ -547,7 +547,7 @@ export function GateClient({
       setVisitorName(data.visitor.name ?? '');
       setPhotoKey(data.visitor.photoKey ?? null);
       setPhotoPreviewUrl(data.visitor.signedPhotoUrl ?? null);
-      setRelation((data.visitor.defaultRelation as GuardianRelation) || 'Father');
+      setRelation((data.visitor.defaultRelation as GuardianRelation) || '');
       const linked: LinkedStudentItem[] = data.linkedStudents ?? [];
       setLinkedStudents(linked);
       const initialMap = new Map<string, LinkedStudentItem>();
@@ -686,7 +686,7 @@ export function GateClient({
   // P0.4: Compute first missing requirement hint for sticky bottom bar
   const getMissingHint = (): string | null => {
     if (!visitorName.trim()) return t('missingNameHint');
-    if (!isKnownVisitor && !relation) return t('missingRelationHint');
+    if (!relation) return t('missingRelationHint');
     if (selectedIds.length === 0) return t('missingStudentHint');
     if (!purpose) return t('missingPurposeHint');
     if (purpose === 'Other' && !purposeNote.trim()) return t('missingPurposeHint');
@@ -1488,9 +1488,28 @@ export function GateClient({
                     <p className="text-sm font-bold text-slate-900">
                       {visitorName}
                     </p>
-                    <p className="text-xs text-slate-500">
-                      {relation ? tGuardian(`relations.${relation}`) : ''}
-                    </p>
+                    {relation ? (
+                      <p className="text-xs text-slate-500">
+                        {tGuardian(`relations.${relation}`)}
+                      </p>
+                    ) : (
+                      <select
+                        id="knownVisitorRelation"
+                        value={relation}
+                        onChange={(e) =>
+                          setRelation(e.target.value as GuardianRelation | '')
+                        }
+                        required
+                        className="mt-1 flex h-8 rounded-md border border-amber-400 bg-white px-2 py-1 text-xs text-slate-700"
+                      >
+                        <option value="">{t('selectRelationPlaceholder')}</option>
+                        {GUARDIAN_RELATIONS.map((rel) => (
+                          <option key={rel} value={rel}>
+                            {tGuardian(`relations.${rel}`)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                 </div>
                 <Label

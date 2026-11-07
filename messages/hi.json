@@ -297,7 +297,8 @@
     "statusExpired": "समय समाप्त",
     "notePrefix": "टिप्पणी",
     "justNow": "अभी-अभी",
-    "minsAgo": "{count} मि. पहले"
+    "minsAgo": "{count} मि. पहले",
+    "photoUnavailable": "फ़ोटो उपलब्ध नहीं"
   },
   "dashboard": {
     "title": "आज",

@@ -37,6 +37,7 @@ export interface IVisit extends Document {
   exitAt: Date | null;
   leftWithStudent?: boolean;
   pickupBlocked?: boolean;
+  photoMissing?: boolean;
   autoClosed: boolean;
   checkedInBy: Types.ObjectId;
   checkedOutBy?: Types.ObjectId;
@@ -107,6 +108,10 @@ const VisitSchema = new Schema<IVisit>(
       default: false,
     },
     pickupBlocked: {
+      type: Boolean,
+      default: false,
+    },
+    photoMissing: {
       type: Boolean,
       default: false,
     },

@@ -157,6 +157,7 @@ export async function POST(req: NextRequest) {
 
     const school = await School.findById(schoolObjectId).lean();
     const teacherApprovalFor = school?.teacherApprovalFor ?? 'pickup';
+    const expiryMinutes = school?.teacherApprovalExpiryMinutes ?? 30;
     const isPickup = body.purpose === 'Pickup';
     const requiresApproval = !isApproved && (teacherApprovalFor === 'all_flagged' || isPickup);
 
@@ -177,6 +178,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const isExpiredOnSync =
+      offlineSynced &&
+      now.getTime() - finalEntryAt.getTime() > expiryMinutes * 60 * 1000;
+
     try {
       const createdVisit = await Visit.create({
         schoolId: schoolObjectId,
@@ -192,6 +197,7 @@ export async function POST(req: NextRequest) {
         exitAt: null,
         leftWithStudent: false,
         pickupBlocked: requiresApproval,
+        photoMissing: body.photoMissing ?? false,
         autoClosed: false,
         checkedInBy: checkedInByObjectId,
       });
@@ -216,13 +222,15 @@ export async function POST(req: NextRequest) {
             },
           }).lean();
 
+          const initialStatus = isExpiredOnSync ? 'expired' : 'pending';
+
           const reqDoc = await ApprovalRequest.create({
             schoolId: schoolObjectId,
             visitId: createdVisit._id,
             studentId: student._id,
             visitorId: visitor._id,
             teacherId: teacher ? teacher._id : null,
-            status: 'pending',
+            status: initialStatus,
             requestedBy: checkedInByObjectId,
           });
 
@@ -234,73 +242,91 @@ export async function POST(req: NextRequest) {
             section: student.section,
           });
 
-          await writeAuditLog({
-            schoolId: schoolObjectId,
-            userId: checkedInByObjectId,
-            action: 'approval.request',
-            entityType: 'ApprovalRequest',
-            entityId: reqDoc._id,
-            metadata: {
-              visitId: String(createdVisit._id),
-              studentId: String(student._id),
-              teacherId: teacher ? String(teacher._id) : null,
-              purpose: createdVisit.purpose,
-            },
-          });
+          if (isExpiredOnSync) {
+            await writeAuditLog({
+              schoolId: schoolObjectId,
+              userId: checkedInByObjectId,
+              action: 'approval.expired_on_sync',
+              entityType: 'ApprovalRequest',
+              entityId: reqDoc._id,
+              metadata: {
+                visitId: String(createdVisit._id),
+                studentId: String(student._id),
+                teacherId: teacher ? String(teacher._id) : null,
+                purpose: createdVisit.purpose,
+                entryAt: finalEntryAt.toISOString(),
+                expiryMinutes,
+              },
+            });
+          } else {
+            await writeAuditLog({
+              schoolId: schoolObjectId,
+              userId: checkedInByObjectId,
+              action: 'approval.request',
+              entityType: 'ApprovalRequest',
+              entityId: reqDoc._id,
+              metadata: {
+                visitId: String(createdVisit._id),
+                studentId: String(student._id),
+                teacherId: teacher ? String(teacher._id) : null,
+                purpose: createdVisit.purpose,
+              },
+            });
 
-          // Web Push notification via outbox (non-blocking immediate attempt with 3s timeout)
-          try {
-            const reasonLabel =
-              createdVisit.reasonCode ||
-              visitor.defaultRelation ||
-              'अभिभावक';
-            const pushTitle = `पिकअप अनुरोध — ${student.name} (${student.className}-${student.section})`;
-            const pushBody = `${visitor.name} (${reasonLabel}) गेट पर हैं। मंज़ूरी या अस्वीकार करने के लिए टैप करें।`;
-            const pushUrl = `/teacher?request=${String(reqDoc._id)}`;
+            // Web Push notification via outbox (non-blocking immediate attempt with 3s timeout)
+            try {
+              const reasonLabel =
+                createdVisit.reasonCode ||
+                visitor.defaultRelation ||
+                'अभिभावक';
+              const pushTitle = `पिकअप अनुरोध — ${student.name} (${student.className}-${student.section})`;
+              const pushBody = `${visitor.name} (${reasonLabel}) गेट पर हैं। मंज़ूरी या अस्वीकार करने के लिए टैप करें।`;
+              const pushUrl = `/teacher?request=${String(reqDoc._id)}`;
 
-            if (teacher) {
-              await notify(
-                teacher._id,
-                'approval_request',
-                {
-                  title: pushTitle,
-                  body: pushBody,
-                  url: pushUrl,
-                },
-                `approval_request:${String(reqDoc._id)}:${String(teacher._id)}`,
-                {
-                  schoolId: schoolObjectId,
-                  fallbackToPrincipalsIfNoSub: true,
-                }
-              );
-            } else {
-              const principals = await User.find({
-                schoolIds: schoolObjectId,
-                role: 'principal',
-                isActive: true,
-              })
-                .select('_id')
-                .lean();
-
-              if (principals.length > 0) {
+              if (teacher) {
                 await notify(
-                  principals.map((p) => p._id),
+                  teacher._id,
                   'approval_request',
                   {
                     title: pushTitle,
                     body: pushBody,
                     url: pushUrl,
                   },
-                  `approval_request:${String(reqDoc._id)}:no_teacher`,
+                  `approval_request:${String(reqDoc._id)}:${String(teacher._id)}`,
                   {
                     schoolId: schoolObjectId,
-                    fallbackToPrincipalsIfNoSub: false,
+                    fallbackToPrincipalsIfNoSub: true,
                   }
                 );
+              } else {
+                const principals = await User.find({
+                  schoolIds: schoolObjectId,
+                  role: 'principal',
+                  isActive: true,
+                })
+                  .select('_id')
+                  .lean();
+
+                if (principals.length > 0) {
+                  await notify(
+                    principals.map((p) => p._id),
+                    'approval_request',
+                    {
+                      title: pushTitle,
+                      body: pushBody,
+                      url: pushUrl,
+                    },
+                    `approval_request:${String(reqDoc._id)}:no_teacher`,
+                    {
+                      schoolId: schoolObjectId,
+                      fallbackToPrincipalsIfNoSub: false,
+                    }
+                  );
+                }
               }
+            } catch (pushErr) {
+              console.warn('[Push] Error enqueuing push for approval request:', pushErr);
             }
-          } catch (pushErr) {
-            console.warn('[Push] Error enqueuing push for approval request:', pushErr);
           }
         }
       }

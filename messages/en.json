@@ -297,7 +297,8 @@
     "statusExpired": "Expired",
     "notePrefix": "Note",
     "justNow": "just now",
-    "minsAgo": "{count} min ago"
+    "minsAgo": "{count} min ago",
+    "photoUnavailable": "Photo unavailable"
   },
   "dashboard": {
     "title": "Today",

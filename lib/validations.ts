@@ -170,6 +170,7 @@ export const gateCreateVisitBodySchema = z.object({
   name: z.string().trim().min(1, 'Visitor name is required'),
   relation: z.enum(GUARDIAN_RELATIONS).optional(),
   photoKey: z.string().trim().optional(),
+  photoMissing: z.boolean().optional(),
   consentAt: z.coerce.date().optional(),
   consentVersion: z.string().trim().min(1).optional(),
   studentIds: z

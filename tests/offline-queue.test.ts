@@ -36,6 +36,7 @@ import { Student } from '@/models/Student';
 import { Visitor } from '@/models/Visitor';
 import { Visit } from '@/models/Visit';
 import { ApprovalRequest } from '@/models/ApprovalRequest';
+import { Notification } from '@/models/Notification';
 import { AuditLog } from '@/models/AuditLog';
 import { POST as createVisitRoute } from '@/app/api/gate/visits/route';
 import {
@@ -423,6 +424,228 @@ describe('Offline Queue & Gate Entry Suite (Bugs 1–3)', () => {
       // Ensure /api/gate/visits was NEVER called without the photo
       const visitsCalls = mockFetch.mock.calls.filter((c: any[]) => c[0] === '/api/gate/visits');
       expect(visitsCalls.length).toBe(0);
+    });
+
+    it('FIX 1: when sign endpoint returns 503 storage not configured, submits visit with photoMissing=true and removes from queue; when fetch throws, stays queued', async () => {
+      const school = await School.create({
+        schoolId: 'SCH-FIX1',
+        name: 'Govt Co-ed SSS',
+        udiseCode: '07010100301',
+        district: 'North',
+        state: 'Delhi',
+      });
+
+      const guard = await User.create({
+        name: 'Guard Fix1',
+        phone: '9811113331',
+        passwordHash: 'dummy',
+        role: 'guard',
+        schoolIds: [school._id],
+        isActive: true,
+      });
+
+      const student = await Student.create({
+        schoolId: school._id,
+        admissionNo: 'ADM-FIX1',
+        name: 'Riya Sharma',
+        className: '4',
+        section: 'A',
+        isActive: true,
+      });
+
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guard._id),
+          role: 'guard',
+          schoolIds: [String(school._id)],
+        },
+      });
+
+      const photoBlob = new Blob(['offline photo bytes'], { type: 'image/jpeg' });
+      const record: OfflineVisitRecord = {
+        clientId: 'fix1-photo-entry',
+        schoolId: String(school._id),
+        payload: {
+          schoolId: String(school._id),
+          clientId: 'fix1-photo-entry',
+          phone: '9811113339',
+          name: 'Visitor Without R2',
+          studentIds: [String(student._id)],
+          purpose: 'Office work',
+          reasonCode: 'Relative',
+          entryAt: new Date().toISOString(),
+        },
+        photoBlob,
+        createdAt: Date.now(),
+      };
+
+      await enqueueOfflineVisit(record);
+      expect(await getOfflineVisitsCount()).toBe(1);
+
+      // Part A: when fetch throws (network error), the visit stays queued
+      const throwingFetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+      globalThis.fetch = throwingFetch as any;
+
+      const netFailResult = await syncOfflineVisits();
+      expect(netFailResult.synced).toBe(0);
+      expect(await getOfflineVisitsCount()).toBe(1);
+      expect((await getOfflineVisits())[0]?.photoBlob).toBeTruthy();
+
+      // Part B: when /api/uploads/sign returns 503 storage not configured,
+      // drops photoBlob, submits to /api/gate/visits with photoMissing=true, and removes from queue
+      const r2UnsetFetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/uploads/sign')) {
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({ error: 'Photo storage is not configured' }),
+          };
+        }
+        if (url.includes('/api/gate/visits')) {
+          const routeRes = await createVisitRoute(
+            new NextRequest('http://localhost/api/gate/visits', {
+              method: 'POST',
+              body: init?.body as string,
+            })
+          );
+          const data = await routeRes.json();
+          return {
+            ok: routeRes.ok,
+            status: routeRes.status,
+            json: async () => data,
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({}) };
+      });
+      globalThis.fetch = r2UnsetFetch as any;
+
+      const syncOkResult = await syncOfflineVisits();
+      expect(syncOkResult.synced).toBe(1);
+      expect(syncOkResult.remaining).toBe(0);
+      expect(await getOfflineVisitsCount()).toBe(0);
+
+      const savedVisit = await Visit.findOne({ clientId: 'fix1-photo-entry' }).lean();
+      expect(savedVisit).not.toBeNull();
+      expect(savedVisit?.photoMissing).toBe(true);
+    });
+  });
+
+  describe('FIX 2: Stale offline-synced pickup requests expire on sync without notifying teacher', () => {
+    it('creates ApprovalRequest with status expired, zero Notification docs, and writes approval.expired_on_sync audit log when entryAt is older than expiry window; younger creates pending + notification', async () => {
+      const school = await School.create({
+        schoolId: 'SCH-FIX2',
+        name: 'Govt Sarvodaya Vidyalaya',
+        udiseCode: '07010100302',
+        district: 'West',
+        state: 'Delhi',
+        teacherApprovalExpiryMinutes: 30,
+      });
+
+      const guard = await User.create({
+        name: 'Guard Fix2',
+        phone: '9811114441',
+        passwordHash: 'dummy',
+        role: 'guard',
+        schoolIds: [school._id],
+        isActive: true,
+      });
+
+      const teacher = await User.create({
+        name: 'Teacher Fix2',
+        phone: '9811114442',
+        passwordHash: 'dummy',
+        role: 'teacher',
+        schoolIds: [school._id],
+        classAssignments: [{ schoolId: school._id, className: '5', section: 'A' }],
+        isActive: true,
+      });
+
+      const student = await Student.create({
+        schoolId: school._id,
+        admissionNo: 'ADM-FIX2',
+        name: 'Kabir Singh',
+        className: '5',
+        section: 'A',
+        isActive: true,
+      });
+
+      mockAuth.mockResolvedValue({
+        user: {
+          id: String(guard._id),
+          role: 'guard',
+          schoolIds: [String(school._id)],
+        },
+      });
+
+      // 1. Older than expiry window (e.g. 2 hours ago > 30m)
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const staleRes = await createVisitRoute(
+        new NextRequest('http://localhost/api/gate/visits', {
+          method: 'POST',
+          body: JSON.stringify({
+            schoolId: String(school._id),
+            clientId: 'fix2-stale-pickup',
+            phone: '9811114445',
+            name: 'Late Synced Relative',
+            studentIds: [String(student._id)],
+            purpose: 'Pickup',
+            reasonCode: 'Relative',
+            entryAt: twoHoursAgo.toISOString(),
+          }),
+        })
+      );
+
+      expect(staleRes.status).toBe(201);
+      const staleData = await staleRes.json();
+      expect(staleData.visit.pickupBlocked).toBe(true);
+      expect(staleData.visit.isApproved).toBe(false);
+      expect(staleData.approvalRequests).toHaveLength(1);
+      expect(staleData.approvalRequests[0].status).toBe('expired');
+
+      // Zero Notification docs created for stale sync
+      const notifCountAfterStale = await Notification.countDocuments({
+        schoolId: school._id,
+      });
+      expect(notifCountAfterStale).toBe(0);
+
+      // Audit log approval.expired_on_sync written
+      const expiredAudit = await AuditLog.findOne({
+        schoolId: school._id,
+        action: 'approval.expired_on_sync',
+        entityId: staleData.approvalRequests[0]._id,
+      }).lean();
+      expect(expiredAudit).not.toBeNull();
+
+      // 2. Younger than expiry window (e.g. 10 minutes ago <= 30m)
+      const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const freshRes = await createVisitRoute(
+        new NextRequest('http://localhost/api/gate/visits', {
+          method: 'POST',
+          body: JSON.stringify({
+            schoolId: String(school._id),
+            clientId: 'fix2-fresh-pickup',
+            phone: '9811114446',
+            name: 'Fresh Synced Relative',
+            studentIds: [String(student._id)],
+            purpose: 'Pickup',
+            reasonCode: 'Relative',
+            entryAt: tenMinsAgo.toISOString(),
+          }),
+        })
+      );
+
+      expect(freshRes.status).toBe(201);
+      const freshData = await freshRes.json();
+      expect(freshData.visit.pickupBlocked).toBe(true);
+      expect(freshData.approvalRequests).toHaveLength(1);
+      expect(freshData.approvalRequests[0].status).toBe('pending');
+
+      // Notification doc created for teacher
+      const notifsAfterFresh = await Notification.find({
+        schoolId: school._id,
+        userId: teacher._id,
+      }).lean();
+      expect(notifsAfterFresh.length).toBe(1);
     });
   });
 });

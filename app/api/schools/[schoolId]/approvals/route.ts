@@ -87,7 +87,10 @@ export async function GET(
       ApprovalRequest.find(filter)
         .populate('studentId', 'name className section rollNumber')
         .populate('visitorId', 'name phone photoKey defaultRelation')
-        .populate('visitId', 'purpose purposeNote reasonCode reasonText entryAt')
+        .populate(
+          'visitId',
+          'purpose purposeNote reasonCode reasonText entryAt photoMissing'
+        )
         .populate('teacherId', 'name')
         .populate('decidedBy', 'name role')
         .sort({ createdAt: -1 })

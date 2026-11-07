@@ -54,6 +54,7 @@ interface ApprovalRequestItem {
     reasonCode?: string;
     reasonText?: string;
     entryAt: string;
+    photoMissing?: boolean;
   };
 }
 
@@ -358,7 +359,7 @@ export function TeacherClient({
           {/* White Visitor & Student Card */}
           <div className="mt-3 rounded-2xl bg-white p-4 text-center text-slate-900 shadow-lg">
             <div className="mx-auto h-20 w-20 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-              {req.visitor?.signedPhotoUrl ? (
+              {req.visitor?.signedPhotoUrl && !req.visit?.photoMissing ? (
                 <Image
                   src={req.visitor.signedPhotoUrl}
                   alt={req.visitor.name || 'Visitor'}
@@ -368,8 +369,11 @@ export function TeacherClient({
                   unoptimized
                 />
               ) : (
-                <div className="flex h-full w-full items-center justify-center text-slate-400">
-                  <UserIcon className="h-9 w-9" />
+                <div className="flex h-full w-full flex-col items-center justify-center p-1 text-center text-slate-400">
+                  <UserIcon className="h-7 w-7" />
+                  <span className="mt-0.5 text-[9px] font-semibold leading-tight text-slate-500">
+                    {t('photoUnavailable')}
+                  </span>
                 </div>
               )}
             </div>
@@ -689,7 +693,7 @@ export function TeacherClient({
                       onClick={() => router.push(`/teacher?request=${req._id}`)}
                       className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
                     >
-                      {req.visitor?.signedPhotoUrl ? (
+                      {req.visitor?.signedPhotoUrl && !req.visit?.photoMissing ? (
                         <Image
                           src={req.visitor.signedPhotoUrl}
                           alt={req.visitor.name || 'Visitor'}
@@ -698,8 +702,11 @@ export function TeacherClient({
                           unoptimized
                         />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center text-slate-400">
-                          <UserIcon className="h-6 w-6" />
+                        <div className="flex h-full w-full flex-col items-center justify-center p-0.5 text-center text-slate-400">
+                          <UserIcon className="h-5 w-5" />
+                          <span className="text-[8px] font-semibold leading-tight text-slate-500">
+                            {t('photoUnavailable')}
+                          </span>
                         </div>
                       )}
                     </button>
