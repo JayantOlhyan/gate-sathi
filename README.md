@@ -29,6 +29,7 @@ GateSathi is a free visitor-entry progressive web application (PWA) designed spe
 │  - Multi-tenant school isolation (every query scoped by schoolId)      │
 │  - Audit logger (lib/audit.ts writes every state change)               │
 │  - Idempotent API endpoints via clientId / dedupeKey                   │
+│  - Read-only Pilot UI routes (/approvals/recent, /stats & /visits/today│
 └──────┬───────────────────────┬──────────────────────────┬──────────────┘
        │                       │                          │
        ▼                       ▼                          ▼
@@ -219,10 +220,13 @@ npm run seed
 ### Development Scripts
 ```bash
 npm run dev           # Start Next.js development server on port 3000
+npm run dev:local     # Start local dev server with embedded in-memory MongoDB + seed data
+npm run pilot         # Create/verify a real pilot school + principal + guard + teachers
 npm run test          # Run Vitest test suite with real in-memory MongoDB
 npm run typecheck     # Validate TypeScript types without emit
 npm run lint          # Run ESLint validation
 npm run build         # Build production bundle with Webpack & Serwist PWA
+npx tsx scripts/e2e-pilot.ts # Run Playwright 360x640 Hindi E2E flow timing + screenshot verification
 ```
 
 ### Environment Variables
@@ -235,6 +239,7 @@ npm run build         # Build production bundle with Webpack & Serwist PWA
 | `AUTH_TRUST_HOST` | Trust proxy headers (Netlify) | `true` |
 | `OTP_MODE` | OTP delivery mechanism | `mock` (dev/preview) or `msg91` (prod) |
 | `ALLOW_MOCK_OTP` | Allows OTP 000000 in mock mode | `true` (never in real production) |
+| `NEXT_PUBLIC_DEMO_MODE` | Exposes `/demo` showcase & demo credentials on landing page | Omit / `false` in production; `true` for local demo |
 | `MSG91_AUTH_KEY` | MSG91 API authentication key | Set once DLT approved |
 | `MSG91_TEMPLATE_ID`| DLT-approved MSG91 OTP template ID | Set once DLT approved |
 | `R2_ACCOUNT_ID` | Cloudflare account ID | Cloudflare dashboard |
@@ -282,6 +287,7 @@ For full deployment and Cloudflare R2 CORS configurations, refer to [DEPLOY.md](
 - [x] Week 2: Student & guardian bulk import (CSV/XLSX), conflict resolution
 - [x] Week 3: Gate entry engine (lookup, photo capture, student linking, auto-approval)
 - [x] Week 4: Offline entry queue (IndexedDB), PWA service worker, full Hindi localization, reliable notification outbox & escalation
+- [x] Pilot UI Rebuild (Nov 2026): Rebuilt Screens 01–13 to match `docs/ux/reference/` mockups (Hindi-first single-language rendering, 2-step Guard lookup + one-screen entry, live approval status strip, 2-step exit confirmation, Teacher large-photo approval & history tabs, Principal 4-stat summary + Today's Gate Log + Teacher Roster + responsive Student CSV Import), resolved Pilot Blockers P0.1–P0.6, and verified via Playwright E2E suite (`scripts/e2e-pilot.ts`)
 - [ ] Deploy to Netlify production + seed database + R2 CORS verified
 - [ ] Field timing validation on budget Android phone (<15s repeat visitor, <45s new visitor)
 - [ ] Acceptance test: New guard logs entry with zero intervention
