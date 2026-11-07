@@ -16,14 +16,12 @@ export const VISIT_PURPOSES = [
 
 export type VisitPurpose = (typeof VISIT_PURPOSES)[number];
 
-export const UNAPPROVED_REASON_CODES = [
-  'Relative',
-  'Neighbour',
-  'Driver/auto',
-  'Other',
-] as const;
+import {
+  UNAPPROVED_REASON_CODES,
+  type UnapprovedReasonCode,
+} from '@/lib/constants';
 
-export type UnapprovedReasonCode = (typeof UNAPPROVED_REASON_CODES)[number];
+export { UNAPPROVED_REASON_CODES, type UnapprovedReasonCode };
 
 export interface IVisit extends Document {
   schoolId: Types.ObjectId;

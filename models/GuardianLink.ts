@@ -1,16 +1,8 @@
 import mongoose, { Schema, type Document, type Model, type Types } from 'mongoose';
 
-export const GUARDIAN_RELATIONS = [
-  'Father',
-  'Mother',
-  'Grandparent',
-  'Sibling',
-  'Uncle',
-  'Aunt',
-  'Other',
-] as const;
+import { GUARDIAN_RELATIONS, type GuardianRelation } from '@/lib/constants';
 
-export type GuardianRelation = (typeof GUARDIAN_RELATIONS)[number];
+export { GUARDIAN_RELATIONS, type GuardianRelation };
 
 export interface IGuardianLink extends Document {
   schoolId: Types.ObjectId;

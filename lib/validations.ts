@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { GUARDIAN_RELATIONS } from '@/models/GuardianLink';
-import { UNAPPROVED_REASON_CODES } from '@/models/Visit';
+import { GUARDIAN_RELATIONS, UNAPPROVED_REASON_CODES } from '@/lib/constants';
 
 export const ROLES = ['super_admin', 'principal', 'guard', 'teacher'] as const;
 export type Role = (typeof ROLES)[number];

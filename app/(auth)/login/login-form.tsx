@@ -54,7 +54,12 @@ export function LoginForm() {
         <CardDescription>{t('description')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        <form
+          method="post"
+          onSubmit={handleSubmit}
+          className="space-y-4"
+          noValidate
+        >
           <div className="space-y-1.5">
             <Label htmlFor="phone">{t('phoneLabel')}</Label>
             <Input
