@@ -246,7 +246,7 @@ npm run build         # Build production bundle with Webpack & Serwist PWA
 | `VAPID_PRIVATE_KEY`| Web Push VAPID private key | Generated via web-push |
 | `VAPID_SUBJECT` | VAPID contact email / URL | `mailto:support@gatesathi.in` |
 
-For full deployment and Cloudflare R2 CORS configurations, refer to [DEPLOY.md](file:///Users/jayantolhyan/Desktop/my%20projects/startups%20/Gate%20sathi/DEPLOY.md). For visual screen layout references across Guard, Teacher, and Principal views, see [uiux-references/README.md](file:///Users/jayantolhyan/Desktop/my%20projects/startups%20/Gate%20sathi/uiux-references/README.md).
+For full deployment and Cloudflare R2 CORS configurations, refer to [DEPLOY.md](DEPLOY.md). For visual screen layout references across Guard, Teacher, and Principal views, see [uiux-references/README.md](uiux-references/README.md).
 
 ---
 
@@ -371,5 +371,5 @@ The following capabilities are deliberately planned for post-v1 phases:
 
 ## 10. Links & Resources
 - **Notion Master Page:** [GateSathi Master Checklist](https://app.notion.com/p/408d8b74468a8198aae5d34e49a2d81d)
-- **Deployment Guide:** [DEPLOY.md](file:///Users/jayantolhyan/Desktop/my%20projects/startups%20/Gate%20sathi/DEPLOY.md)
+- **Deployment Guide:** [DEPLOY.md](DEPLOY.md)
 - **GitHub Repository:** [github.com/JayantOlhyan/gate-sathi](https://github.com/JayantOlhyan/gate-sathi)
