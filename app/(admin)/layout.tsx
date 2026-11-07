@@ -4,7 +4,7 @@ export default function AdminLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[360px] flex-col bg-slate-50 shadow-sm">
+    <div className="flex min-h-dvh w-full flex-col bg-[#F8FAFC]">
       {children}
     </div>
   );

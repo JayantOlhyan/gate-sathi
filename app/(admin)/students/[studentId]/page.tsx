@@ -30,7 +30,7 @@ export default async function StudentDetailPage({
   }
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="mx-auto flex min-h-dvh w-full max-w-3xl flex-1 flex-col">
       <AppHeader showLogout />
       <main className="flex-1 p-4">
         <StudentDetailClient schoolId={activeSchoolId} studentId={studentId} />

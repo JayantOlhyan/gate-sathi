@@ -1,22 +1,48 @@
-import Link from 'next/link';
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { AppHeader } from '@/components/app-header';
 import { InstallPrompt } from '@/components/install-prompt';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { connectDB } from '@/lib/db';
 import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
+import { School } from '@/models/School';
 import { DashboardClient } from './dashboard-client';
 
 export default async function DashboardPage() {
   let user;
   let activeSchoolId = '';
+  let schoolName = 'GateSathi School';
+  let udiseCode = '';
+  let district = '';
+  let state = '';
 
   try {
     user = await requireRole('principal', 'super_admin');
-    const primarySchoolId = user.schoolIds[0];
+    let primarySchoolId = user.schoolIds[0];
+
+    if (!primarySchoolId && user.role === 'super_admin') {
+      await connectDB();
+      const firstSchool = await School.findOne({ isActive: true })
+        .select('_id')
+        .lean();
+      if (firstSchool?._id) {
+        primarySchoolId = String(firstSchool._id);
+      }
+    }
+
     if (primarySchoolId) {
       const access = await requireSchoolAccess(primarySchoolId);
       activeSchoolId = access.schoolId;
+      await connectDB();
+      const schoolDoc = await School.findById(activeSchoolId)
+        .select('name udiseCode district state')
+        .lean();
+      if (schoolDoc) {
+        schoolName = schoolDoc.name;
+        udiseCode = schoolDoc.udiseCode;
+        district = schoolDoc.district ?? '';
+        state = schoolDoc.state ?? '';
+      }
     }
   } catch (error) {
     if (error instanceof RbacError && error.status === 401) {
@@ -25,32 +51,30 @@ export default async function DashboardPage() {
     redirect('/gate');
   }
 
-  const t = await getTranslations('dashboard');
+  const tApp = await getTranslations('app');
+  const subtitle = udiseCode
+    ? `${schoolName} · UDISE ${udiseCode}`
+    : schoolName;
 
   return (
-    <div className="flex flex-1 flex-col">
-      <AppHeader showLogout />
-      <main className="flex-1 space-y-4 p-4">
+    <div className="flex min-h-dvh flex-1 flex-col">
+      {/* Mobile Header (<1024px) */}
+      <div className="lg:hidden">
+        <AppHeader showLogout subtitle={subtitle} />
+      </div>
+      <div className="lg:hidden px-3.5 pt-2">
         <InstallPrompt variant="compact" />
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <span className="inline-block w-fit rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">
-                {t('badge')}
-              </span>
-              {activeSchoolId && (
-                <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-600">
-                  School: {activeSchoolId.slice(-6)}
-                </span>
-              )}
-            </div>
-            <CardTitle className="pt-1">{t('title')}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <DashboardClient schoolId={activeSchoolId} />
-          </CardContent>
-        </Card>
-      </main>
+      </div>
+      <Suspense fallback={null}>
+        <DashboardClient
+          schoolId={activeSchoolId}
+          schoolName={schoolName}
+          udiseCode={udiseCode}
+          district={district}
+          state={state}
+          logoutLabel={tApp('logout')}
+        />
+      </Suspense>
     </div>
   );
 }
