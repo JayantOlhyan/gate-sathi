@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { GUARDIAN_RELATIONS, type GuardianRelation } from '@/models/GuardianLink';
+import { GUARDIAN_RELATIONS, type GuardianRelation } from '@/lib/constants';
 import type { StudentListItem } from '../students-client';
 
 interface GuardianItem {
