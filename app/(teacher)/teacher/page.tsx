@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { AppHeader } from '@/components/app-header';
 import { InstallPrompt } from '@/components/install-prompt';
@@ -25,9 +26,11 @@ export default async function TeacherPage() {
   return (
     <div className="flex flex-1 flex-col">
       <AppHeader showLogout />
-      <main className="flex-1 p-3 sm:p-4">
+      <main className="flex flex-1 flex-col p-3.5">
         <InstallPrompt variant="compact" />
-        <TeacherClient user={user} schoolId={activeSchoolId} />
+        <Suspense fallback={null}>
+          <TeacherClient user={user} schoolId={activeSchoolId} />
+        </Suspense>
       </main>
     </div>
   );
