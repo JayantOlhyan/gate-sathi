@@ -22,6 +22,7 @@ Configure the following environment variables in **Netlify Site Settings → Env
 | `VAPID_PUBLIC_KEY` | Yes (Push) | Application server public key for Web Push. Generate via `npx web-push generate-vapid-keys`. |
 | `VAPID_PRIVATE_KEY` | Yes (Push) | Application server private key for Web Push. Keep secret! |
 | `VAPID_SUBJECT` | Recommended | Contact email or URL for VAPID push payload headers (default: `mailto:support@gatesathi.in`). |
+| `NEXT_PUBLIC_DEMO_MODE` | Optional | Set to `true` only on demo/showcase sites to show the `/demo/*` interactive preview pages and seed credentials on the landing page. Leave unset or `false` on pilot/production deploys (`404` on `/demo/*` and credentials hidden). |
 
 ---
 

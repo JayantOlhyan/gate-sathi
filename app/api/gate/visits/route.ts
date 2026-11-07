@@ -250,14 +250,22 @@ export async function POST(req: NextRequest) {
 
           // Web Push notification via outbox (non-blocking immediate attempt with 3s timeout)
           try {
+            const reasonLabel =
+              createdVisit.reasonCode ||
+              visitor.defaultRelation ||
+              'अभिभावक';
+            const pushTitle = `पिकअप अनुरोध — ${student.name} (${student.className}-${student.section})`;
+            const pushBody = `${visitor.name} (${reasonLabel}) गेट पर हैं। मंज़ूरी या अस्वीकार करने के लिए टैप करें।`;
+            const pushUrl = `/teacher?request=${String(reqDoc._id)}`;
+
             if (teacher) {
               await notify(
                 teacher._id,
                 'approval_request',
                 {
-                  title: 'Visitor Approval Required',
-                  body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
-                  url: '/teacher',
+                  title: pushTitle,
+                  body: pushBody,
+                  url: pushUrl,
                 },
                 `approval_request:${String(reqDoc._id)}:${String(teacher._id)}`,
                 {
@@ -279,9 +287,9 @@ export async function POST(req: NextRequest) {
                   principals.map((p) => p._id),
                   'approval_request',
                   {
-                    title: 'Visitor Approval Required (No Teacher)',
-                    body: `Pickup requested for ${student.name} (${student.className}-${student.section}) by ${visitor.name}.`,
-                    url: '/dashboard',
+                    title: pushTitle,
+                    body: pushBody,
+                    url: pushUrl,
                   },
                   `approval_request:${String(reqDoc._id)}:no_teacher`,
                   {
