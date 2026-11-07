@@ -33,7 +33,7 @@ function getStartOfTodayIst(now: Date = new Date()): Date {
   return new Date(startOfIstDayUtcMs);
 }
 
-export function maskPhone(phone?: string): string {
+function maskPhone(phone?: string): string {
   if (!phone || phone.length < 5) return 'XXXXXXXXXX';
   return `${phone.slice(0, 2)}XXXXX${phone.slice(-3)}`;
 }

@@ -89,9 +89,7 @@ export function InstallPrompt({
     return null;
   }
 
-  // Only show if either beforeinstallprompt fired OR user is on iOS Safari
-  // (or on prominent guard screen so guards always see the install card)
-  if (!deferredPrompt && !isIosSafari && variant !== 'prominent') {
+  if (!deferredPrompt && !isIosSafari) {
     return null;
   }
 
