@@ -246,7 +246,7 @@ npm run build         # Build production bundle with Webpack & Serwist PWA
 | `VAPID_PRIVATE_KEY`| Web Push VAPID private key | Generated via web-push |
 | `VAPID_SUBJECT` | VAPID contact email / URL | `mailto:support@gatesathi.in` |
 
-For full deployment and Cloudflare R2 CORS configurations, refer to [DEPLOY.md](file:///Users/jayantolhyan/Desktop/my%20projects/startups%20/Gate%20sathi/DEPLOY.md).
+For full deployment and Cloudflare R2 CORS configurations, refer to [DEPLOY.md](file:///Users/jayantolhyan/Desktop/my%20projects/startups%20/Gate%20sathi/DEPLOY.md). For visual screen layout references across Guard, Teacher, and Principal views, see [uiux-references/README.md](file:///Users/jayantolhyan/Desktop/my%20projects/startups%20/Gate%20sathi/uiux-references/README.md).
 
 ---
 
