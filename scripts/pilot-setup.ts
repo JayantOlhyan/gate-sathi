@@ -87,7 +87,9 @@ async function main() {
         },
         { upsert: true, new: true }
       );
-      console.log(`School ready: ${school.name} (UDISE ${school.udiseCode}, _id ${String(school._id)})`);
+      console.log(
+        `School ready: ${school.name} (UDISE ${school.udiseCode}, _id ${String(school._id)})`
+      );
       break;
     }
 
@@ -103,12 +105,20 @@ async function main() {
 
       const classAssignments =
         role === 'teacher'
-          ? [{ schoolId: school._id, className: need(f.class, 'class'), section: need(f.section, 'section') }]
+          ? [
+              {
+                schoolId: school._id,
+                className: need(f.class, 'class'),
+                section: need(f.section, 'section'),
+              },
+            ]
           : [];
 
       const existing = await User.findOne({ phone });
       if (existing && existing.role !== role) {
-        throw new Error(`Phone ${phone} already belongs to a ${existing.role}. Use a different number.`);
+        throw new Error(
+          `Phone ${phone} already belongs to a ${existing.role}. Use a different number.`
+        );
       }
 
       await User.findOneAndUpdate(
@@ -167,7 +177,9 @@ async function main() {
       console.log(`${school.name} (${school.udiseCode})`);
       for (const u of users) {
         const cls = (u.classAssignments ?? []).map((c) => `${c.className}-${c.section}`).join(', ');
-        console.log(`  ${u.role.padEnd(9)} ${u.phone}  ${u.name}${cls ? `  [${cls}]` : ''}${u.isActive ? '' : '  (inactive)'}`);
+        console.log(
+          `  ${u.role.padEnd(9)} ${u.phone}  ${u.name}${cls ? `  [${cls}]` : ''}${u.isActive ? '' : '  (inactive)'}`
+        );
       }
       break;
     }
