@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "generate:icons": "tsx scripts/generate-icons.ts",
     "seed": "tsx scripts/seed.ts",
+    "pilot": "tsx scripts/pilot-setup.ts",
     "test": "vitest run"
   },
   "dependencies": {
