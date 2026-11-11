@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { AppHeader } from '@/components/app-header';
 import { connectDB } from '@/lib/db';
 import { RbacError, requireRole, requireSchoolAccess } from '@/lib/rbac';
@@ -7,6 +8,10 @@ import { StudentsClient } from './students-client';
 
 export default async function StudentsPage() {
   let activeSchoolId = '';
+  let schoolName = 'GateSathi School';
+  let udiseCode = '';
+  let district = '';
+  let state = '';
 
   try {
     const user = await requireRole('principal', 'super_admin');
@@ -29,6 +34,16 @@ export default async function StudentsPage() {
     if (targetSchoolId) {
       const access = await requireSchoolAccess(targetSchoolId);
       activeSchoolId = access.schoolId;
+      await connectDB();
+      const schoolDoc = await School.findById(activeSchoolId)
+        .select('name udiseCode district state')
+        .lean();
+      if (schoolDoc) {
+        schoolName = schoolDoc.name;
+        udiseCode = schoolDoc.udiseCode;
+        district = schoolDoc.district ?? '';
+        state = schoolDoc.state ?? '';
+      }
     }
   } catch (error) {
     if (error instanceof RbacError && error.status === 401) {
@@ -37,12 +52,24 @@ export default async function StudentsPage() {
     redirect('/gate');
   }
 
+  const tApp = await getTranslations('app');
+  const subtitle = udiseCode
+    ? `${schoolName} · UDISE ${udiseCode}`
+    : schoolName;
+
   return (
-    <div className="flex flex-1 flex-col">
-      <AppHeader showLogout />
-      <main className="flex-1 p-4">
-        <StudentsClient schoolId={activeSchoolId} />
-      </main>
+    <div className="flex min-h-dvh flex-1 flex-col">
+      <div className="lg:hidden">
+        <AppHeader showLogout subtitle={subtitle} />
+      </div>
+      <StudentsClient
+        schoolId={activeSchoolId}
+        schoolName={schoolName}
+        udiseCode={udiseCode}
+        district={district}
+        state={state}
+        logoutLabel={tApp('logout')}
+      />
     </div>
   );
 }

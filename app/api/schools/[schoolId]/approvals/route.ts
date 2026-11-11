@@ -5,6 +5,7 @@ import { connectDB } from '@/lib/db';
 import { handleApiError, requireRole, requireSchoolAccess } from '@/lib/rbac';
 import { ApprovalRequest } from '@/models/ApprovalRequest';
 import { Student } from '@/models/Student';
+import { School } from '@/models/School';
 import '@/models/Visitor';
 import '@/models/Visit';
 import '@/models/User';
@@ -79,14 +80,22 @@ export async function GET(
       }
     }
 
-    const requests = await ApprovalRequest.find(filter)
-      .populate('studentId', 'name className section rollNumber')
-      .populate('visitorId', 'name phone photoKey defaultRelation')
-      .populate('visitId', 'purpose purposeNote reasonCode reasonText entryAt')
-      .populate('teacherId', 'name')
-      .populate('decidedBy', 'name role')
-      .sort({ createdAt: -1 })
-      .lean();
+    const [school, requests] = await Promise.all([
+      School.findById(schoolObjectId)
+        .select('teacherApprovalEscalationMinutes')
+        .lean(),
+      ApprovalRequest.find(filter)
+        .populate('studentId', 'name className section rollNumber')
+        .populate('visitorId', 'name phone photoKey defaultRelation')
+        .populate(
+          'visitId',
+          'purpose purposeNote reasonCode reasonText entryAt photoMissing'
+        )
+        .populate('teacherId', 'name')
+        .populate('decidedBy', 'name role')
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
 
     const formattedRequests = await Promise.all(
       requests.map(async (r) => {
@@ -134,6 +143,7 @@ export async function GET(
     return NextResponse.json(
       {
         schoolId,
+        escalationMinutes: school?.teacherApprovalEscalationMinutes ?? 5,
         requests: formattedRequests,
       },
       { status: 200 }

@@ -2,7 +2,16 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import {
+  Bell,
+  Check,
+  Clock,
+  User as UserIcon,
+  X,
+  AlertTriangle,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,6 +54,7 @@ interface ApprovalRequestItem {
     reasonCode?: string;
     reasonText?: string;
     entryAt: string;
+    photoMissing?: boolean;
   };
 }
 
@@ -59,14 +69,6 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-function formatWaitingTime(createdAt: string) {
-  const diffMs = Date.now() - new Date(createdAt).getTime();
-  const mins = Math.floor(diffMs / (60 * 1000));
-  if (mins < 1) return 'अभी-अभी (Just now)';
-  if (mins === 1) return '1 मिनट पहले (1 min ago)';
-  return `${mins} मिनट पहले (${mins} mins ago)`;
-}
-
 export function TeacherClient({
   user,
   schoolId,
@@ -74,31 +76,48 @@ export function TeacherClient({
   user: SessionUser;
   schoolId: string;
 }) {
+  const t = useTranslations('teacher');
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const focusedRequestId = searchParams.get('request');
+
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
-  const [pendingRequests, setPendingRequests] = useState<ApprovalRequestItem[]>([]);
-  const [historyRequests, setHistoryRequests] = useState<ApprovalRequestItem[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<ApprovalRequestItem[]>(
+    []
+  );
+  const [historyRequests, setHistoryRequests] = useState<ApprovalRequestItem[]>(
+    []
+  );
+  const [escalationMinutes, setEscalationMinutes] = useState<number>(5);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  // Reject modal / inline note state
+  // Reject inline note state
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
 
-  // Add as guardian toggle state per request
-  const [guardianCheck, setGuardianCheck] = useState<Record<string, boolean>>({});
+  // Add as guardian toggle state per request (unchecked by default)
+  const [guardianCheck, setGuardianCheck] = useState<Record<string, boolean>>(
+    {}
+  );
 
   // Push notification state
   const [pushStatus, setPushStatus] = useState<
     'default' | 'granted' | 'denied' | 'unsupported' | 'subscribed'
   >(() => {
     if (typeof window === 'undefined') return 'default';
-    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    if (
+      !('serviceWorker' in navigator) ||
+      !('PushManager' in window) ||
+      !('Notification' in window)
+    ) {
       return 'unsupported';
     }
     if (Notification.permission === 'granted') {
-      return 'granted';
+      return 'subscribed';
     }
     if (Notification.permission === 'denied') {
       return 'denied';
@@ -120,6 +139,13 @@ export function TeacherClient({
       (window.navigator as any).standalone === true
     );
   });
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSubscribePush = async () => {
     if (pushStatus === 'unsupported') return;
@@ -164,9 +190,9 @@ export function TeacherClient({
       });
 
       setPushStatus('subscribed');
-      setSuccessMsg('सूचनाएं (Notifications) सफलतापूर्वक चालू हो गईं!');
+      setSuccessMsg(t('notificationsSubscribedToast'));
     } catch (err: any) {
-      setErrorMsg(err.message || 'सूचनाएं सक्रिय करने में त्रुटि हुई');
+      setErrorMsg(err.message || 'Error enabling notifications');
     } finally {
       setPushLoading(false);
     }
@@ -175,18 +201,22 @@ export function TeacherClient({
   const fetchRequests = useCallback(async () => {
     if (!schoolId) return;
     try {
-      if (activeTab === 'pending') {
-        const res = await fetch(`/api/schools/${schoolId}/approvals`);
-        if (res.ok) {
-          const data = await res.json();
-          setPendingRequests(data.requests || []);
+      const [pendingRes, historyRes] = await Promise.all([
+        fetch(`/api/schools/${schoolId}/approvals`),
+        activeTab === 'history'
+          ? fetch(`/api/schools/${schoolId}/approvals?history=true`)
+          : Promise.resolve(null),
+      ]);
+      if (pendingRes.ok) {
+        const data = await pendingRes.json();
+        setPendingRequests(data.requests || []);
+        if (typeof data.escalationMinutes === 'number') {
+          setEscalationMinutes(data.escalationMinutes);
         }
-      } else {
-        const res = await fetch(`/api/schools/${schoolId}/approvals?history=true`);
-        if (res.ok) {
-          const data = await res.json();
-          setHistoryRequests(data.requests || []);
-        }
+      }
+      if (historyRes && historyRes.ok) {
+        const hData = await historyRes.json();
+        setHistoryRequests(hData.requests || []);
       }
     } catch {
       // ignore poll network glitch
@@ -195,35 +225,43 @@ export function TeacherClient({
     }
   }, [schoolId, activeTab]);
 
-  // Initial and 10s polling effect
   useEffect(() => {
     if (!schoolId) return;
     let cancelled = false;
-
     const run = async () => {
       try {
-        const endpoint =
-          activeTab === 'pending'
-            ? `/api/schools/${schoolId}/approvals`
-            : `/api/schools/${schoolId}/approvals?history=true`;
-        const res = await fetch(endpoint);
-        if (res.ok && !cancelled) {
-          const data = await res.json();
-          if (activeTab === 'pending') {
+        const [pendingRes, historyRes] = await Promise.all([
+          fetch(`/api/schools/${schoolId}/approvals`),
+          activeTab === 'history'
+            ? fetch(`/api/schools/${schoolId}/approvals?history=true`)
+            : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        if (pendingRes.ok) {
+          const data = await pendingRes.json();
+          if (!cancelled) {
             setPendingRequests(data.requests || []);
-          } else {
-            setHistoryRequests(data.requests || []);
+            if (typeof data.escalationMinutes === 'number') {
+              setEscalationMinutes(data.escalationMinutes);
+            }
+          }
+        }
+        if (historyRes && historyRes.ok) {
+          const hData = await historyRes.json();
+          if (!cancelled) {
+            setHistoryRequests(hData.requests || []);
           }
         }
       } catch {
-        // ignore
+        // ignore poll network glitch
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
-
-    run();
-    const interval = setInterval(run, 10000);
+    void run();
+    const interval = setInterval(() => {
+      void run();
+    }, 10000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -239,7 +277,7 @@ export function TeacherClient({
 
     if (decision === 'reject') {
       if (!rejectNote.trim() || rejectNote.trim().length < 3) {
-        setErrorMsg('अस्वीकार करने के लिए कारण (टिप्पणी) लिखना अनिवार्य है।');
+        setErrorMsg(t('rejectReasonRequired'));
         return;
       }
     }
@@ -261,101 +299,302 @@ export function TeacherClient({
 
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(data.error || 'निर्णय सहेजने में त्रुटि हुई');
+        setErrorMsg(data.error || 'Error saving decision');
         return;
       }
 
       setSuccessMsg(
-        decision === 'approve'
-          ? 'अनुरोध सफलतापूर्वक स्वीकृत (Approved) किया गया।'
-          : 'अनुरोध अस्वीकार (Rejected) कर दिया गया।'
+        decision === 'approve' ? t('approvedSuccess') : t('rejectedSuccess')
       );
       setRejectingId(null);
       setRejectNote('');
-      // Refresh list immediately
+      if (focusedRequestId) {
+        router.replace('/teacher');
+      }
       await fetchRequests();
     } catch {
-      setErrorMsg('नेटवर्क त्रुटि: निर्णय दर्ज नहीं हो सका');
+      setErrorMsg('Network error saving decision');
     } finally {
       setProcessingId(null);
     }
   };
 
+  const formatWaitingTime = (createdAt: string) => {
+    const diffMs = Math.max(0, nowMs - new Date(createdAt).getTime());
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return t('justNow');
+    return t('minsAgo', { count: mins });
+  };
+
+  // Ref 08: Full-bleed navy "buzzer" request detail view when ?request=<id> matches a pending request
+  const focusedRequest = focusedRequestId
+    ? pendingRequests.find((r) => r._id === focusedRequestId) ??
+      pendingRequests[0]
+    : null;
+
+  if (focusedRequestId && focusedRequest) {
+    const req = focusedRequest;
+    const isProcessing = processingId === req._id;
+    const isRejecting = rejectingId === req._id;
+    const createdMs = new Date(req.createdAt).getTime();
+    const elapsedSec = Math.max(0, Math.floor((nowMs - createdMs) / 1000));
+    const totalEscSec = Math.max(60, escalationMinutes * 60);
+    const remSec = Math.max(0, totalEscSec - elapsedSec);
+    const remTimeStr = `${Math.floor(remSec / 60)}:${String(remSec % 60).padStart(2, '0')}`;
+    const reqTimeStr = new Date(req.createdAt).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    return (
+      <div className="-m-3.5 flex min-h-[calc(100dvh-3.5rem)] flex-col justify-between bg-brand-blue px-4 py-4 text-white">
+        <div>
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white/15 ring-4 ring-white/10">
+            <Bell className="h-6 w-6 text-[#F59E0B]" />
+          </div>
+          <p className="mt-2 text-center text-sm font-bold text-white">
+            {t('buzzerTitle')} · {reqTimeStr}
+          </p>
+
+          {/* White Visitor & Student Card */}
+          <div className="mt-3 rounded-2xl bg-white p-4 text-center text-slate-900 shadow-lg">
+            <div className="mx-auto h-20 w-20 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+              {req.visitor?.signedPhotoUrl && !req.visit?.photoMissing ? (
+                <Image
+                  src={req.visitor.signedPhotoUrl}
+                  alt={req.visitor.name || 'Visitor'}
+                  width={80}
+                  height={80}
+                  className="h-full w-full object-cover"
+                  unoptimized
+                />
+              ) : (
+                <div className="flex h-full w-full flex-col items-center justify-center p-1 text-center text-slate-400">
+                  <UserIcon className="h-7 w-7" />
+                  <span className="mt-0.5 text-[9px] font-semibold leading-tight text-slate-500">
+                    {t('photoUnavailable')}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <h2 className="mt-2.5 text-lg font-extrabold text-slate-900">
+              {req.visitor?.name}
+            </h2>
+            <p className="text-xs font-medium text-slate-600">
+              {t('saysRelation', {
+                relation:
+                  req.visit?.reasonCode ||
+                  req.visitor?.defaultRelation ||
+                  'Visitor',
+              })}{' '}
+              · {req.visitor?.phone}
+            </p>
+
+            <div className="my-3 border-t border-slate-200 pt-2.5">
+              <p className="text-[11px] font-medium text-slate-500">
+                {t('wantsToTake')}
+              </p>
+              <p className="mt-0.5 text-base font-extrabold text-slate-900">
+                {req.student?.name} · Class {req.student?.className}-
+                {req.student?.section}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-[#F59E0B] bg-[#FFFBEB] px-3 py-1.5 text-[11px] font-bold text-amber-900">
+              ⚠{' '}
+              {t('notOnGuardianListReason', {
+                reason:
+                  req.visit?.reasonCode ||
+                  req.visitor?.defaultRelation ||
+                  'Unlisted',
+              })}
+            </div>
+
+            <label
+              htmlFor={`buzzer-guardian-${req._id}`}
+              className="mt-3 flex cursor-pointer items-center justify-center gap-2 text-xs font-medium text-slate-700"
+            >
+              <input
+                type="checkbox"
+                id={`buzzer-guardian-${req._id}`}
+                checked={Boolean(guardianCheck[req._id])}
+                onChange={(e) =>
+                  setGuardianCheck((prev) => ({
+                    ...prev,
+                    [req._id]: e.target.checked,
+                  }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-brand-blue"
+              />
+              <span>{t('addGuardianCheckbox')}</span>
+            </label>
+          </div>
+
+          {errorMsg && (
+            <p
+              role="alert"
+              className="mt-2.5 rounded-lg bg-red-600/90 px-3 py-2 text-center text-xs font-bold text-white"
+            >
+              {errorMsg}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-4 space-y-2.5">
+          {isRejecting ? (
+            <div className="rounded-xl bg-white p-3 text-slate-900 shadow-md space-y-2">
+              <Label
+                htmlFor="buzzer-reject-note"
+                className="text-xs font-bold text-red-900"
+              >
+                {t('rejectNoteLabel')}
+              </Label>
+              <Input
+                id="buzzer-reject-note"
+                placeholder={t('rejectNotePlaceholder')}
+                value={rejectNote}
+                onChange={(e) => setRejectNote(e.target.value)}
+                className="h-10 text-xs"
+                autoFocus
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setRejectingId(null);
+                    setRejectNote('');
+                  }}
+                  className="h-9 text-xs font-semibold"
+                >
+                  {t('cancelBtn')}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={isProcessing}
+                  onClick={() => void handleDecision(req._id, 'reject')}
+                  className="h-9 bg-[#DC2626] text-xs font-bold text-white hover:bg-red-700"
+                >
+                  {t('confirmRejectBtn')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                disabled={isProcessing}
+                onClick={() => {
+                  setRejectingId(req._id);
+                  setRejectNote('');
+                }}
+                className="h-14 rounded-xl bg-[#DC2626] text-base font-extrabold text-white shadow-md hover:bg-red-700"
+              >
+                ✕ {t('rejectBtn')}
+              </Button>
+              <Button
+                type="button"
+                disabled={isProcessing}
+                onClick={() => void handleDecision(req._id, 'approve')}
+                className="h-14 rounded-xl bg-[#059669] text-base font-extrabold text-white shadow-md hover:bg-[#047857]"
+              >
+                ✓ {t('approveBtn')}
+              </Button>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between text-[11px] text-white/80">
+            <span>{t('goesToPrincipalIfNoAnswer', { time: remTimeStr })}</span>
+            <button
+              type="button"
+              onClick={() => router.replace('/teacher')}
+              className="font-semibold text-white underline"
+            >
+              List view
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Ref 10: Teacher Portal Home
   const assignedClassesText =
     user.classAssignments && user.classAssignments.length > 0
       ? user.classAssignments
-          .map((a) => `कक्षा ${a.className}-${a.section}`)
+          .map((a) => `Class ${a.className}-${a.section}`)
           .join(', ')
-      : 'सभी कक्षाएं (Admin view)';
+      : t('allClassesLabel');
 
   return (
-    <div className="space-y-4">
-      {/* Teacher Role Header */}
-      <div className="flex items-center justify-between rounded-lg bg-white p-3 shadow-sm border border-slate-200">
-        <div>
-          <span className="inline-block rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-brand-blue">
-            शिक्षक पोर्टल (Teacher Portal)
+    <div className="space-y-3.5">
+      {/* Top Sub-bar: Assigned classes + Notification status pill */}
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-2.5 shadow-2xs">
+        <span className="truncate text-xs font-bold text-slate-800">
+          {assignedClassesText}
+        </span>
+        {pushStatus === 'subscribed' ? (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-[#059669]">
+            {t('notificationsOnPill')}
           </span>
-          <p className="mt-1 text-xs text-slate-600">
-            कक्षा आवंटन: <strong className="text-slate-800">{assignedClassesText}</strong>
-          </p>
-        </div>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            disabled={pushLoading || pushStatus === 'unsupported'}
+            onClick={handleSubscribePush}
+            className="h-7 shrink-0 rounded-full bg-brand-blue px-3 text-[11px] font-bold text-white hover:bg-brand-blue/90"
+          >
+            🔔 {t('enableNotificationsBtn')}
+          </Button>
+        )}
       </div>
 
       {/* iOS PWA Installation Banner */}
       {isIOS && !isStandalone && (
-        <Card className="border border-amber-300 bg-amber-50 p-3 shadow-sm">
-          <div className="flex flex-col gap-1.5 text-xs">
-            <div className="flex items-center gap-1.5 font-bold text-amber-900">
-              <span>📱</span>
-              <span>iPhone / iPad: होम स्क्रीन पर जोड़ना आवश्यक है (Install GateSathi)</span>
-            </div>
-            <p className="text-[11px] text-amber-800 leading-relaxed">
-              Apple iOS पर विज़िटर सूचनाएं (Push Notifications) पाने के लिए GateSathi को Safari की होम स्क्रीन पर जोड़ना अनिवार्य है:
-            </p>
-            <ol className="list-decimal list-inside text-[11px] text-amber-800 space-y-0.5">
-              <li>Safari के नीचे <strong>शेयर (Share)</strong> बटन पर टैप करें।</li>
-              <li><strong>&apos;Add to Home Screen&apos; (होम स्क्रीन में जोड़ें)</strong> चुनें।</li>
-              <li>होम स्क्रीन पर बने <strong>GateSathi</strong> आइकन से खोलें और सूचनाएं चालू करें।</li>
-            </ol>
-            <p className="text-[10px] text-amber-700 italic">
-              (iOS requires installing GateSathi as a PWA to enable push notifications. Tap Share &rarr; Add to Home Screen, then open from Home Screen.)
-            </p>
-          </div>
-        </Card>
+        <div className="rounded-xl border border-[#F59E0B] bg-[#FFFBEB] p-3 text-xs text-amber-950">
+          <p className="font-bold">📱 {t('iosInstallTitle')}</p>
+          <p className="mt-1 text-[11px] text-amber-800 leading-relaxed">
+            {t('iosInstallStep1')} &rarr; {t('iosInstallStep2')} &rarr;{' '}
+            {t('iosInstallStep3')}
+          </p>
+        </div>
       )}
 
-      {/* Push Notification Bar */}
+      {/* Enable Notifications Card when not subscribed */}
       {pushStatus !== 'subscribed' && (
-        <Card className="border border-blue-200 bg-blue-50/80 p-3 shadow-sm">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs">
+        <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs">
+          <div className="flex items-center justify-between gap-2">
             <div>
               <p className="font-bold text-blue-950">
-                🔔 विज़िटर पिकअप सूचनाएं चालू करें (Enable Visitor Notifications)
+                🔔 {t('enableNotificationsTitle')}
               </p>
-              <p className="text-[11px] text-blue-700 mt-0.5">
-                गेट पर आए आगंतुक की तुरंत मंज़ूरी के लिए अपने फ़ोन पर सूचनाएं चालू करें।
+              <p className="mt-0.5 text-[11px] text-blue-700">
+                {t('enableNotificationsDesc')}
               </p>
             </div>
             <Button
               type="button"
               size="sm"
-              variant="outline"
               disabled={pushLoading || pushStatus === 'unsupported'}
               onClick={handleSubscribePush}
-              className="h-8 shrink-0 bg-brand-blue text-xs font-bold text-white hover:bg-brand-blue/90 border-transparent"
+              className="h-8 shrink-0 bg-brand-blue text-xs font-bold text-white hover:bg-brand-blue/90"
             >
-              {pushLoading ? 'चालू हो रहा है...' : 'सूचनाएं चालू करें (Enable)'}
+              {pushLoading
+                ? t('enablingNotifications')
+                : t('enableNotificationsBtn')}
             </Button>
           </div>
-        </Card>
+        </div>
       )}
 
-      {/* Messages */}
       {errorMsg && (
         <p
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 p-2.5 text-xs font-medium text-red-700"
+          className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs font-medium text-red-700"
         >
           {errorMsg}
         </p>
@@ -363,32 +602,27 @@ export function TeacherClient({
       {successMsg && (
         <p
           role="status"
-          className="rounded-md border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-medium text-emerald-800"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-medium text-emerald-800"
         >
           {successMsg}
         </p>
       )}
 
-      {/* Tabs */}
-      <div className="flex border-b border-slate-200">
+      {/* Segmented Tabs (Ref 10) */}
+      <div className="grid grid-cols-2 rounded-xl border border-[#E2E8F0] bg-slate-100 p-1">
         <button
           type="button"
           onClick={() => {
             setActiveTab('pending');
             setLoading(true);
           }}
-          className={`flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-xs font-bold transition-colors ${
+          className={`rounded-lg py-2 text-xs font-bold transition-colors ${
             activeTab === 'pending'
-              ? 'border-brand-blue text-brand-blue'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              ? 'bg-brand-blue text-white shadow-2xs'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <span>मंज़ूरी अनुरोध (Pending)</span>
-          {pendingRequests.length > 0 && (
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
-              {pendingRequests.length}
-            </span>
-          )}
+          {t('pendingTab')} ({pendingRequests.length})
         </button>
         <button
           type="button"
@@ -396,36 +630,34 @@ export function TeacherClient({
             setActiveTab('history');
             setLoading(true);
           }}
-          className={`border-b-2 px-4 py-2.5 text-xs font-bold transition-colors ${
+          className={`rounded-lg py-2 text-xs font-bold transition-colors ${
             activeTab === 'history'
-              ? 'border-brand-blue text-brand-blue'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
+              ? 'bg-brand-blue text-white shadow-2xs'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          30 दिनों का इतिहास (History)
+          {t('historyTab')}
         </button>
       </div>
 
       {/* Content */}
       {loading ? (
         <div className="py-12 text-center text-xs text-slate-500">
-          लोड हो रहा है (Loading)...
+          {t('loadingText')}
         </div>
       ) : activeTab === 'pending' ? (
         pendingRequests.length === 0 ? (
-          <Card className="text-center py-12">
-            <CardContent className="space-y-2">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-2xl">
-                ✓
-              </div>
-              <h3 className="text-sm font-bold text-slate-800">
-                कोई लंबित अनुरोध नहीं है
-              </h3>
-              <p className="text-xs text-slate-500">
-                जब भी कोई गैर-स्वीकृत आगंतुक छात्र को ले जाने आएगा, यहाँ तुरंत दिखेगा।
-              </p>
-            </CardContent>
-          </Card>
+          <div className="rounded-xl border border-[#E2E8F0] bg-white py-12 text-center shadow-2xs">
+            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50 text-[#059669]">
+              <Check className="h-6 w-6 stroke-[2.5]" />
+            </div>
+            <h3 className="mt-2.5 text-sm font-bold text-slate-800">
+              {t('noPendingTitle')}
+            </h3>
+            <p className="mt-1 px-6 text-xs text-slate-500">
+              {t('noPendingDesc')}
+            </p>
+          </div>
         ) : (
           <div className="space-y-3">
             {pendingRequests.map((req) => {
@@ -434,209 +666,219 @@ export function TeacherClient({
               const isRejecting = rejectingId === req._id;
 
               return (
-                <Card
+                <div
                   key={req._id}
-                  className={`overflow-hidden border-2 ${
-                    isEscalated
-                      ? 'border-amber-400 bg-amber-50/20'
-                      : 'border-slate-200 bg-white'
-                  }`}
+                  className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white p-3.5 shadow-xs space-y-3"
                 >
-                  <CardHeader className="bg-slate-50/80 p-3 pb-2 border-b border-slate-100">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900">
-                          {req.visit?.purpose || 'छात्र को ले जाना (Pickup)'}
-                        </span>
-                        {isEscalated && (
-                          <span className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-800 animate-pulse">
-                            एस्केलेटेड (5+ min)
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[11px] text-slate-500 font-medium">
-                        {formatWaitingTime(req.createdAt)}
-                      </span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-3 space-y-3">
-                    {/* Visitor & Student Details */}
-                    <div className="flex gap-3">
-                      {/* Photo */}
-                      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-                        {req.visitor?.signedPhotoUrl ? (
-                          <Image
-                            src={req.visitor.signedPhotoUrl}
-                            alt={req.visitor.name || 'Visitor'}
-                            fill
-                            className="object-cover"
-                            unoptimized
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-2xl text-slate-400">
-                            👤
-                          </div>
-                        )}
-                      </div>
+                  {/* Top Badge + Elapsed */}
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#FFFBEB] px-2.5 py-0.5 text-[11px] font-bold text-amber-900 border border-[#F59E0B]/40">
+                      {isEscalated
+                        ? t('escalatedBadge')
+                        : req.visit?.purpose || t('defaultPickupPurpose')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/teacher?request=${req._id}`)}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-brand-blue"
+                    >
+                      {formatWaitingTime(req.createdAt)}
+                    </button>
+                  </div>
 
-                      {/* Info */}
-                      <div className="flex-1 min-w-0 text-xs space-y-1">
-                        <div>
-                          <p className="text-[11px] text-slate-500 font-medium">
-                            आगंतुक (Visitor)
-                          </p>
-                          <h4 className="font-bold text-slate-900 truncate">
-                            {req.visitor?.name || 'अज्ञात आगंतुक'}
-                          </h4>
-                          <p className="text-slate-600">
-                            संबंध:{' '}
-                            <strong className="text-slate-800">
-                              {req.visitor?.defaultRelation || 'अभिभावक'}
-                            </strong>{' '}
-                            | {req.visitor?.phone}
-                          </p>
-                        </div>
-
-                        <div className="pt-1 border-t border-slate-100">
-                          <p className="text-[11px] text-slate-500 font-medium">
-                            छात्र (Student)
-                          </p>
-                          <p className="font-bold text-brand-blue truncate">
-                            {req.student?.name} (कक्षा {req.student?.className}-
-                            {req.student?.section})
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Guard's Reason */}
-                    {(req.visit?.reasonCode || req.visit?.reasonText) && (
-                      <div className="rounded bg-slate-50 p-2 text-xs text-slate-700 border border-slate-100">
-                        <span className="font-semibold text-slate-900">
-                          गेट गार्ड का कारण:
-                        </span>{' '}
-                        {req.visit?.reasonCode}{' '}
-                        {req.visit?.reasonText && `(${req.visit.reasonText})`}
-                      </div>
-                    )}
-
-                    {/* Add as approved guardian checkbox */}
-                    <div className="flex items-center gap-2 pt-1">
-                      <input
-                        type="checkbox"
-                        id={`guardian-${req._id}`}
-                        checked={Boolean(guardianCheck[req._id])}
-                        onChange={(e) =>
-                          setGuardianCheck((prev) => ({
-                            ...prev,
-                            [req._id]: e.target.checked,
-                          }))
-                        }
-                        className="h-4 w-4 rounded border-slate-300 text-brand-blue focus:ring-brand-blue"
-                      />
-                      <label
-                        htmlFor={`guardian-${req._id}`}
-                        className="text-xs font-medium text-slate-700 cursor-pointer"
-                      >
-                        भविष्य के लिए स्वीकृत अभिभावक सूची में जोड़ें (Add as approved guardian)
-                      </label>
-                    </div>
-
-                    {/* Inline Reject Note Form */}
-                    {isRejecting ? (
-                      <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-3">
-                        <Label htmlFor={`note-${req._id}`} className="text-xs font-bold text-red-900">
-                          अस्वीकार करने का कारण दर्ज करें (अनिवार्य):
-                        </Label>
-                        <Input
-                          id={`note-${req._id}`}
-                          placeholder="उदा. अभिभावक ने फोन पर मना किया / अज्ञात व्यक्ति"
-                          value={rejectNote}
-                          onChange={(e) => setRejectNote(e.target.value)}
-                          className="h-9 text-xs bg-white"
-                          autoFocus
+                  {/* Visitor & Child Row */}
+                  <div className="flex items-start gap-3">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/teacher?request=${req._id}`)}
+                      className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+                    >
+                      {req.visitor?.signedPhotoUrl && !req.visit?.photoMissing ? (
+                        <Image
+                          src={req.visitor.signedPhotoUrl}
+                          alt={req.visitor.name || 'Visitor'}
+                          fill
+                          className="object-cover"
+                          unoptimized
                         />
-                        <div className="flex gap-2 justify-end">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setRejectingId(null);
-                              setRejectNote('');
-                            }}
-                            className="h-8 text-xs"
-                          >
-                            रद्द करें
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="destructive"
-                            disabled={isProcessing}
-                            onClick={() => handleDecision(req._id, 'reject')}
-                            className="h-8 text-xs font-semibold"
-                          >
-                            {isProcessing ? 'सहेजा जा रहा है...' : 'अस्वीकार पुष्टि करें'}
-                          </Button>
+                      ) : (
+                        <div className="flex h-full w-full flex-col items-center justify-center p-0.5 text-center text-slate-400">
+                          <UserIcon className="h-5 w-5" />
+                          <span className="text-[8px] font-semibold leading-tight text-slate-500">
+                            {t('photoUnavailable')}
+                          </span>
                         </div>
-                      </div>
-                    ) : (
-                      /* Action Buttons */
-                      <div className="grid grid-cols-2 gap-2 pt-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={isProcessing}
-                          onClick={() => handleDecision(req._id, 'approve')}
-                          className="h-10 bg-emerald-600 hover:bg-emerald-700 font-bold text-white text-xs"
-                        >
-                          {isProcessing ? 'सत्यापित हो रहा है...' : '✓ मंज़ूरी दें (Approve)'}
-                        </Button>
+                      )}
+                    </button>
+
+                    <div className="min-w-0 flex-1 text-xs space-y-1">
+                      <p className="text-slate-600">
+                        <span className="text-slate-500">
+                          {t('visitorLabel')}:
+                        </span>{' '}
+                        <strong className="text-slate-900">
+                          {req.visitor?.name}
+                        </strong>{' '}
+                        ({req.visitor?.defaultRelation || 'Relative'} ·{' '}
+                        {req.visitor?.phone})
+                      </p>
+                      <p className="text-slate-600">
+                        <span className="text-slate-500">
+                          {t('studentLabel')}:
+                        </span>{' '}
+                        <strong className="text-brand-blue">
+                          {req.student?.name} (Class {req.student?.className}-
+                          {req.student?.section})
+                        </strong>
+                      </p>
+                      {(req.visit?.reasonCode || req.visit?.reasonText) && (
+                        <p className="text-slate-600">
+                          <span className="text-slate-500">
+                            {t('guardReasonLabel')}:
+                          </span>{' '}
+                          <span className="font-medium text-slate-800">
+                            {req.visit?.reasonCode}
+                            {req.visit?.reasonText
+                              ? ` (${req.visit.reasonText})`
+                              : ''}
+                          </span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Add as approved guardian checkbox */}
+                  <label
+                    htmlFor={`guardian-${req._id}`}
+                    className="flex cursor-pointer items-center gap-2 text-xs text-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      id={`guardian-${req._id}`}
+                      checked={Boolean(guardianCheck[req._id])}
+                      onChange={(e) =>
+                        setGuardianCheck((prev) => ({
+                          ...prev,
+                          [req._id]: e.target.checked,
+                        }))
+                      }
+                      className="h-4 w-4 rounded border-slate-300 text-brand-blue"
+                    />
+                    <span>{t('addGuardianCheckbox')}</span>
+                  </label>
+
+                  {/* Inline Reject Form or Approve / Reject Buttons */}
+                  {isRejecting ? (
+                    <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-3">
+                      <Label
+                        htmlFor={`note-${req._id}`}
+                        className="text-xs font-bold text-red-900"
+                      >
+                        {t('rejectNoteLabel')}
+                      </Label>
+                      <Input
+                        id={`note-${req._id}`}
+                        placeholder={t('rejectNotePlaceholder')}
+                        value={rejectNote}
+                        onChange={(e) => setRejectNote(e.target.value)}
+                        className="h-9 bg-white text-xs"
+                        autoFocus
+                      />
+                      <div className="flex justify-end gap-2">
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
-                          disabled={isProcessing}
                           onClick={() => {
-                            setRejectingId(req._id);
+                            setRejectingId(null);
                             setRejectNote('');
                           }}
-                          className="h-10 border-red-300 text-red-700 hover:bg-red-50 font-bold text-xs"
+                          className="h-8 text-xs"
                         >
-                          ✕ अस्वीकार (Reject)
+                          {t('cancelBtn')}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={isProcessing}
+                          onClick={() => void handleDecision(req._id, 'reject')}
+                          className="h-8 bg-[#DC2626] text-xs font-bold text-white hover:bg-red-700"
+                        >
+                          {isProcessing
+                            ? t('savingDecision')
+                            : t('confirmRejectBtn')}
                         </Button>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2.5 pt-0.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={isProcessing}
+                        onClick={() => void handleDecision(req._id, 'approve')}
+                        className="h-10 rounded-lg bg-[#059669] text-xs font-bold text-white hover:bg-[#047857]"
+                      >
+                        {isProcessing
+                          ? t('verifyingDecision')
+                          : `✓ ${t('approveBtn')}`}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={isProcessing}
+                        onClick={() => {
+                          setRejectingId(req._id);
+                          setRejectNote('');
+                        }}
+                        className="h-10 rounded-lg border-[#DC2626] text-xs font-bold text-[#DC2626] hover:bg-red-50"
+                      >
+                        ✕ {t('rejectBtn')}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               );
             })}
+
+            <p className="pt-2 text-center text-xs text-slate-400">
+              {t('noOtherRequests')}
+            </p>
           </div>
         )
       ) : (
         /* History Tab (30 days) */
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {historyRequests.length === 0 ? (
-            <div className="py-12 text-center text-xs text-slate-500">
-              पिछले 30 दिनों में कोई निर्णय दर्ज नहीं है।
+            <div className="rounded-xl border border-[#E2E8F0] bg-white py-12 text-center text-xs text-slate-500">
+              {t('noHistoryDesc')}
             </div>
           ) : (
             historyRequests.map((req) => (
-              <Card key={req._id} className="p-3 text-xs space-y-1.5">
+              <div
+                key={req._id}
+                className="rounded-xl border border-[#E2E8F0] bg-white p-3.5 text-xs shadow-2xs space-y-1.5"
+              >
                 <div className="flex items-center justify-between">
                   <span
-                    className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
                       req.status === 'approved'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-red-100 text-red-800'
+                        ? 'bg-emerald-100 text-[#059669]'
+                        : req.status === 'rejected'
+                        ? 'bg-red-100 text-[#DC2626]'
+                        : 'bg-slate-100 text-slate-600'
                     }`}
                   >
-                    {req.status === 'approved' ? 'स्वीकृत (Approved)' : 'अस्वीकृत (Rejected)'}
+                    {req.status === 'approved'
+                      ? `✓ ${t('statusApproved')}`
+                      : req.status === 'rejected'
+                      ? `✕ ${t('statusRejected')}`
+                      : t('statusExpired')}
                   </span>
                   <span className="text-[11px] text-slate-400">
                     {req.decidedAt
-                      ? new Date(req.decidedAt).toLocaleString('hi-IN', {
+                      ? new Date(req.decidedAt).toLocaleString([], {
                           day: 'numeric',
                           month: 'short',
                           hour: '2-digit',
@@ -645,18 +887,17 @@ export function TeacherClient({
                       : ''}
                   </span>
                 </div>
-                <div className="flex justify-between text-slate-800">
-                  <span>
-                    <strong>{req.visitor?.name}</strong> &rarr; छात्र: {req.student?.name} (कक्षा{' '}
-                    {req.student?.className}-{req.student?.section})
-                  </span>
-                </div>
+                <p className="text-slate-800">
+                  <strong>{req.visitor?.name}</strong> &rarr;{' '}
+                  {req.student?.name} (Class {req.student?.className}-
+                  {req.student?.section})
+                </p>
                 {req.note && (
-                  <p className="text-[11px] text-slate-600 bg-slate-50 p-1.5 rounded">
-                    टिप्पणी: {req.note}
+                  <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+                    {t('notePrefix')}: {req.note}
                   </p>
                 )}
-              </Card>
+              </div>
             ))
           )}
         </div>

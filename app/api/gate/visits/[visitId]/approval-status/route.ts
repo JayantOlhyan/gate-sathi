@@ -6,7 +6,10 @@ import { handleApiError, requireRole, requireSchoolAccess } from '@/lib/rbac';
 import { objectIdSchema } from '@/lib/validations';
 import { Visit } from '@/models/Visit';
 import { ApprovalRequest } from '@/models/ApprovalRequest';
-import { User } from '@/models/User';
+import { School } from '@/models/School';
+import '@/models/Visitor';
+import '@/models/User';
+import '@/models/Student';
 import {
   checkAndEscalatePendingRequests,
   checkAndExpireStaleRequests,
@@ -30,7 +33,9 @@ export async function GET(
     await connectDB();
 
     const visitObjectId = new Types.ObjectId(visitId);
-    const visit = await Visit.findById(visitObjectId).lean();
+    const visit = await Visit.findById(visitObjectId)
+      .populate('visitorId', 'name defaultRelation')
+      .lean();
     if (!visit) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
     }
@@ -42,11 +47,16 @@ export async function GET(
     await checkAndEscalatePendingRequests(schoolId);
     await checkAndExpireStaleRequests(schoolId);
 
-    const requests = await ApprovalRequest.find({ visitId: visitObjectId })
-      .populate('teacherId', 'name phone')
-      .populate('studentId', 'name className section rollNumber')
-      .populate('decidedBy', 'name role')
-      .lean();
+    const [school, requests] = await Promise.all([
+      School.findById(visit.schoolId)
+        .select('teacherApprovalEscalationMinutes teacherApprovalExpiryMinutes')
+        .lean(),
+      ApprovalRequest.find({ visitId: visitObjectId })
+        .populate('teacherId', 'name phone')
+        .populate('studentId', 'name className section rollNumber')
+        .populate('decidedBy', 'name role')
+        .lean(),
+    ]);
 
     if (requests.length === 0) {
       return NextResponse.json(
@@ -109,6 +119,17 @@ export async function GET(
       .map((r) => r.note?.trim())
       .filter((n): n is string => Boolean(n));
 
+    const earliestCreatedAt =
+      requests
+        .map((r) => r.createdAt)
+        .filter((d): d is Date => Boolean(d))
+        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0] ??
+      visit.entryAt;
+
+    const visitVisitor = visit.visitorId as any;
+    const officePhone =
+      (school as any)?.officePhone || (school as any)?.phone || null;
+
     return NextResponse.json(
       {
         hasApproval: true,
@@ -117,6 +138,13 @@ export async function GET(
         teacherName: teacherNames.length > 0 ? teacherNames.join(', ') : 'Principal (प्रधानाचार्य)',
         decidedByName: decidedByNames.length > 0 ? decidedByNames.join(', ') : null,
         decidedAt: latestDecidedAt,
+        createdAt: earliestCreatedAt,
+        escalationMinutes: school?.teacherApprovalEscalationMinutes ?? 5,
+        expiryMinutes: school?.teacherApprovalExpiryMinutes ?? 30,
+        officePhone,
+        visitorName: visitVisitor?.name ?? '',
+        relation: visit.reasonCode || visitVisitor?.defaultRelation || '',
+        purpose: visit.purpose,
         notes,
         requests: requests.map((r) => ({
           _id: String(r._id),
@@ -128,6 +156,7 @@ export async function GET(
           decidedByName: (r.decidedBy as any)?.name ?? null,
           note: r.note ?? null,
           decidedAt: r.decidedAt,
+          createdAt: r.createdAt,
         })),
       },
       { status: 200 }

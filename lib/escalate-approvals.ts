@@ -90,8 +90,14 @@ export async function checkAndEscalatePendingRequests(
 
     // Lookup student name and principal user IDs
     try {
-      const student = await Student.findById(updated.studentId).select('name').lean();
+      const student = await Student.findById(updated.studentId)
+        .select('name className section')
+        .lean();
       const studentName = student?.name || 'Student';
+      const studentClass =
+        student?.className && student?.section
+          ? `${student.className}-${student.section}`
+          : '';
 
       const principals = await User.find({
         schoolIds: updated.schoolId,
@@ -108,8 +114,8 @@ export async function checkAndEscalatePendingRequests(
           principalIds,
           'approval_escalated',
           {
-            title: 'Escalated Visitor Approval',
-            body: `Approval for ${studentName} pending over ${escalationMinutes}m. Action required.`,
+            title: `पिकअप अनुरोध — ${studentName}${studentClass ? ` (${studentClass})` : ''}`,
+            body: `अभिभावक गेट पर हैं (${escalationMinutes} मिनट से प्रतीक्षारत)। निर्णय आवश्यक है।`,
             url: '/dashboard',
           },
           dedupeKey,

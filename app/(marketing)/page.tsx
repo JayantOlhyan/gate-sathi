@@ -733,27 +733,29 @@ export default async function MarketingLandingPage() {
         </section>
 
         {/* 7.5 Interactive Live Demo Showcase */}
-        <section id="demo" className="border-b border-slate-200 bg-slate-50 py-12 sm:py-16">
-          <div className="mx-auto max-w-6xl px-4">
-            <div className="mb-8 text-center">
-              <span className="inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-brand-blue">
-                {isHi ? 'लाइव इंटरैक्टिव डेमो (Interactive Live Demo)' : 'Live Interactive Demo'}
-              </span>
-              <h2 className="mt-2 text-2xl font-black text-slate-900 sm:text-3xl">
-                {isHi ? 'देखें GateSathi कैसे कार्य करता है' : 'See GateSathi in Action'}
-              </h2>
-              <p className="mt-1.5 text-xs text-slate-600 sm:text-sm max-w-xl mx-auto">
-                {isHi
-                  ? 'सुरक्षा गार्ड के मोबाइल फ़ोन और प्रधानाचार्य के एडमिन डैशबोर्ड — दोनों का सीधा इंटरैक्टिव पूर्वावलोकन।'
-                  : 'Interactive live preview of both the Security Guard mobile phone and the Principal admin dashboard.'}
-              </p>
-            </div>
+        {process.env.NEXT_PUBLIC_DEMO_MODE === 'true' && (
+          <section id="demo" className="border-b border-slate-200 bg-slate-50 py-12 sm:py-16">
+            <div className="mx-auto max-w-6xl px-4">
+              <div className="mb-8 text-center">
+                <span className="inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-brand-blue">
+                  {isHi ? 'लाइव इंटरैक्टिव डेमो (Interactive Live Demo)' : 'Live Interactive Demo'}
+                </span>
+                <h2 className="mt-2 text-2xl font-black text-slate-900 sm:text-3xl">
+                  {isHi ? 'देखें GateSathi कैसे कार्य करता है' : 'See GateSathi in Action'}
+                </h2>
+                <p className="mt-1.5 text-xs text-slate-600 sm:text-sm max-w-xl mx-auto">
+                  {isHi
+                    ? 'सुरक्षा गार्ड के मोबाइल फ़ोन और प्रधानाचार्य के एडमिन डैशबोर्ड — दोनों का सीधा इंटरैक्टिव पूर्वावलोकन।'
+                    : 'Interactive live preview of both the Security Guard mobile phone and the Principal admin dashboard.'}
+                </p>
+              </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
-              <DemoShowcase locale={isHi ? 'hi' : 'en'} />
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
+                <DemoShowcase locale={isHi ? 'hi' : 'en'} />
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* 8. Contact / Request a Pilot */}
         <section id="contact" className="bg-white py-12 sm:py-16">
@@ -800,98 +802,100 @@ export default async function MarketingLandingPage() {
       <footer id="footer-key" className="border-t border-slate-200 bg-slate-100 py-10 text-xs text-slate-600">
         <div className="mx-auto max-w-6xl px-4 space-y-8">
           {/* System Key & Live Demos Block */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                  <span className="text-base">🔑</span>
-                  <span>{isHi ? 'सिस्टम एक्सेस कुंजी और लाइव डेमो' : 'System Access Key & Live Demos'}</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {isHi
-                    ? 'प्रत्येक भूमिका का डेमो देखें या दिए गए क्रेडेंशियल्स से लाइव टेस्ट करें:'
-                    : 'Explore the live UI for each role or test log in with these verified credentials:'}
-                </p>
+          {process.env.NEXT_PUBLIC_DEMO_MODE === 'true' && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                    <span className="text-base">🔑</span>
+                    <span>{isHi ? 'सिस्टम एक्सेस कुंजी और लाइव डेमो' : 'System Access Key & Live Demos'}</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {isHi
+                      ? 'प्रत्येक भूमिका का डेमो देखें या दिए गए क्रेडेंशियल्स से लाइव टेस्ट करें:'
+                      : 'Explore the live UI for each role or test log in with these verified credentials:'}
+                  </p>
+                </div>
+                <span className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-900 w-fit">
+                  {isHi ? 'टेस्ट मोड (OTP 000000)' : 'Test Mode (OTP 000000)'}
+                </span>
               </div>
-              <span className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-900 w-fit">
-                {isHi ? 'टेस्ट मोड (OTP 000000)' : 'Test Mode (OTP 000000)'}
-              </span>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {/* Card 1: Mobile Demo */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                      <span>📱</span>
+                      <span>{isHi ? 'सुरक्षा गार्ड (मोबाइल)' : 'Guard (Mobile Phone)'}</span>
+                    </span>
+                    <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-brand-blue">
+                      Gate #1
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] space-y-0.5 text-slate-700 bg-white p-2 rounded border border-slate-200">
+                    <p><strong>Phone:</strong> 9999999992</p>
+                    <p><strong>PIN:</strong> Password@123</p>
+                  </div>
+                  <Link
+                    href="/demo/mobile"
+                    className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-brand-blue px-3 py-1.5 text-[11px] font-bold text-white shadow hover:bg-brand-blue/90"
+                  >
+                    <span>{isHi ? 'मोबाइल डेमो देखें' : 'View Mobile Demo'}</span>
+                    <span>→</span>
+                  </Link>
+                </div>
+
+                {/* Card 2: Admin Principal Demo */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                      <span>💻</span>
+                      <span>{isHi ? 'प्रधानाचार्य (एडमिन)' : 'Principal (Admin)'}</span>
+                    </span>
+                    <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold text-indigo-900">
+                      Dashboard
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] space-y-0.5 text-slate-700 bg-white p-2 rounded border border-slate-200">
+                    <p><strong>Phone:</strong> 9999999991</p>
+                    <p><strong>PIN:</strong> Password@123</p>
+                  </div>
+                  <Link
+                    href="/demo/admin"
+                    className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-brand-blue px-3 py-1.5 text-[11px] font-bold text-white shadow hover:bg-brand-blue/90"
+                  >
+                    <span>{isHi ? 'एडमिन डेमो देखें' : 'View Admin Demo'}</span>
+                    <span>→</span>
+                  </Link>
+                </div>
+
+                {/* Card 3: Super Admin */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                      <span>🛡️</span>
+                      <span>{isHi ? 'राज्य सुपर एडमिन' : 'Super Admin'}</span>
+                    </span>
+                    <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-800">
+                      State Level
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] space-y-0.5 text-slate-700 bg-white p-2 rounded border border-slate-200">
+                    <p><strong>Phone:</strong> 9999999990</p>
+                    <p><strong>PIN:</strong> Password@123</p>
+                  </div>
+                  <Link
+                    href="/demo"
+                    className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-800 hover:bg-slate-100"
+                  >
+                    <span>{isHi ? 'पूर्ण डेमो हब खोलें' : 'Open Demo Hub'}</span>
+                    <span>→</span>
+                  </Link>
+                </div>
+              </div>
             </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {/* Card 1: Mobile Demo */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
-                    <span>📱</span>
-                    <span>{isHi ? 'सुरक्षा गार्ड (मोबाइल)' : 'Guard (Mobile Phone)'}</span>
-                  </span>
-                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-brand-blue">
-                    Gate #1
-                  </span>
-                </div>
-                <div className="font-mono text-[11px] space-y-0.5 text-slate-700 bg-white p-2 rounded border border-slate-200">
-                  <p><strong>Phone:</strong> 9999999992</p>
-                  <p><strong>PIN:</strong> Password@123</p>
-                </div>
-                <Link
-                  href="/demo/mobile"
-                  className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-brand-blue px-3 py-1.5 text-[11px] font-bold text-white shadow hover:bg-brand-blue/90"
-                >
-                  <span>{isHi ? 'मोबाइल डेमो देखें' : 'View Mobile Demo'}</span>
-                  <span>→</span>
-                </Link>
-              </div>
-
-              {/* Card 2: Admin Principal Demo */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
-                    <span>💻</span>
-                    <span>{isHi ? 'प्रधानाचार्य (एडमिन)' : 'Principal (Admin)'}</span>
-                  </span>
-                  <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold text-indigo-900">
-                    Dashboard
-                  </span>
-                </div>
-                <div className="font-mono text-[11px] space-y-0.5 text-slate-700 bg-white p-2 rounded border border-slate-200">
-                  <p><strong>Phone:</strong> 9999999991</p>
-                  <p><strong>PIN:</strong> Password@123</p>
-                </div>
-                <Link
-                  href="/demo/admin"
-                  className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-brand-blue px-3 py-1.5 text-[11px] font-bold text-white shadow hover:bg-brand-blue/90"
-                >
-                  <span>{isHi ? 'एडमिन डेमो देखें' : 'View Admin Demo'}</span>
-                  <span>→</span>
-                </Link>
-              </div>
-
-              {/* Card 3: Super Admin */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
-                    <span>🛡️</span>
-                    <span>{isHi ? 'राज्य सुपर एडमिन' : 'Super Admin'}</span>
-                  </span>
-                  <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-800">
-                    State Level
-                  </span>
-                </div>
-                <div className="font-mono text-[11px] space-y-0.5 text-slate-700 bg-white p-2 rounded border border-slate-200">
-                  <p><strong>Phone:</strong> 9999999990</p>
-                  <p><strong>PIN:</strong> Password@123</p>
-                </div>
-                <Link
-                  href="/demo"
-                  className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-800 hover:bg-slate-100"
-                >
-                  <span>{isHi ? 'पूर्ण डेमो हब खोलें' : 'Open Demo Hub'}</span>
-                  <span>→</span>
-                </Link>
-              </div>
-            </div>
-          </div>
+          )}
 
           {/* Bottom Footer Links */}
           <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center pt-2">
@@ -902,12 +906,16 @@ export default async function MarketingLandingPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-4 text-[11px] font-medium">
-              <Link href="/demo/mobile" className="text-brand-blue hover:underline">
-                {isHi ? 'मोबाइल डेमो' : 'Mobile Demo'}
-              </Link>
-              <Link href="/demo/admin" className="text-brand-blue hover:underline">
-                {isHi ? 'एडमिन डेमो' : 'Admin Demo'}
-              </Link>
+              {process.env.NEXT_PUBLIC_DEMO_MODE === 'true' && (
+                <>
+                  <Link href="/demo/mobile" className="text-brand-blue hover:underline">
+                    {isHi ? 'मोबाइल डेमो' : 'Mobile Demo'}
+                  </Link>
+                  <Link href="/demo/admin" className="text-brand-blue hover:underline">
+                    {isHi ? 'एडमिन डेमो' : 'Admin Demo'}
+                  </Link>
+                </>
+              )}
               <Link href="/login" className="text-brand-blue hover:underline">
                 {isHi ? 'लॉग इन' : 'Login'}
               </Link>

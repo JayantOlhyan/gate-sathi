@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { getLocale } from 'next-intl/server';
 import { LanguageToggle } from '@/components/language-toggle';
 import { DemoShowcase } from '@/components/demo-showcase';
@@ -10,6 +11,9 @@ export const metadata = {
 };
 
 export default async function MobileDemoPage() {
+  if (process.env.NEXT_PUBLIC_DEMO_MODE !== 'true') {
+    notFound();
+  }
   const locale = (await getLocale()) as 'hi' | 'en';
   const isHi = locale === 'hi';
 

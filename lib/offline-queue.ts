@@ -23,6 +23,7 @@ export interface OfflineVisitPayload {
   consentAt?: string;
   consentVersion?: string;
   photoKey?: string;
+  photoMissing?: boolean;
   entryAt?: string;
   pickupBlocked?: boolean;
 }
@@ -32,6 +33,7 @@ export interface OfflineVisitRecord {
   schoolId: string;
   payload: OfflineVisitPayload;
   photoBlob?: Blob | null;
+  photoAttempts?: number;
   createdAt: number;
 }
 
@@ -223,7 +225,9 @@ export async function dismissFailedVisit(clientId: string): Promise<void> {
 
 /**
  * Uploads any queued photo blob to R2 and posts the visit to /api/gate/visits.
- * - If photo upload fails, does NOT send visit without photo; leaves in queue.
+ * - Tracks photoAttempts on the queued record.
+ * - If /api/uploads/sign returns a non-retryable response (any 4xx, or 503/500 whose error says storage is not configured), or photoAttempts >= 3, drops the photo blob, submits the visit WITHOUT photoKey, and sets photoMissing: true in the payload.
+ * - Network errors (fetch throws) still retry next cycle.
  * - On 401, leaves entry in queue for session re-login.
  * - On 4xx/5xx rejection, moves entry to failed_visits store (no silent loss).
  */
@@ -253,10 +257,13 @@ export async function syncOfflineVisits(
   for (const entry of entries) {
     try {
       let finalPhotoKey = entry.payload.photoKey;
+      let finalPhotoMissing = entry.payload.photoMissing;
 
       // 1. If photo blob was queued without a photoKey, upload to R2
       if (entry.photoBlob && !finalPhotoKey) {
         let photoUploaded = false;
+        let dropPhotoAndProceed = false;
+
         try {
           const signRes = await fetch('/api/uploads/sign', {
             method: 'POST',
@@ -271,27 +278,87 @@ export async function syncOfflineVisits(
 
           if (signRes.ok) {
             const { uploadUrl, photoKey } = await signRes.json();
-            const uploadRes = await fetch(uploadUrl, {
-              method: 'PUT',
-              headers: {
-                'Content-Type': entry.photoBlob.type || 'image/jpeg',
-              },
-              body: entry.photoBlob,
-            });
+            try {
+              const uploadRes = await fetch(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': entry.photoBlob.type || 'image/jpeg',
+                },
+                body: entry.photoBlob,
+              });
 
-            if (uploadRes.ok) {
-              finalPhotoKey = photoKey;
-              entry.payload.photoKey = photoKey;
+              if (uploadRes.ok) {
+                finalPhotoKey = photoKey;
+                entry.payload.photoKey = photoKey;
+                await enqueueOfflineVisit(entry);
+                photoUploaded = true;
+              } else {
+                const nextAttempts = (entry.photoAttempts ?? 0) + 1;
+                entry.photoAttempts = nextAttempts;
+                if (nextAttempts >= 3) {
+                  dropPhotoAndProceed = true;
+                } else {
+                  await enqueueOfflineVisit(entry);
+                }
+              }
+            } catch (putErr) {
+              // Network error on PUT: if uploadUrl points to unconfigured R2 or network dropped,
+              // check if we only retry on network errors or increment attempts:
+              console.warn('[OfflineQueue] Photo PUT failed during sync:', putErr);
+              const nextAttempts = (entry.photoAttempts ?? 0) + 1;
+              entry.photoAttempts = nextAttempts;
+              if (nextAttempts >= 3) {
+                dropPhotoAndProceed = true;
+              } else {
+                await enqueueOfflineVisit(entry);
+              }
+            }
+          } else {
+            let errText = '';
+            try {
+              const errData = await signRes.json();
+              errText = String(errData?.error || errData?.message || '');
+            } catch {
+              // ignore json parse error
+            }
+
+            const isNonRetryable4xx =
+              signRes.status >= 400 &&
+              signRes.status < 500 &&
+              signRes.status !== 401;
+            const isStorageNotConfigured =
+              (signRes.status === 503 || signRes.status === 500) &&
+              /not[\s_-]*configured|storage/i.test(errText);
+
+            const nextAttempts = (entry.photoAttempts ?? 0) + 1;
+            entry.photoAttempts = nextAttempts;
+
+            if (
+              isNonRetryable4xx ||
+              isStorageNotConfigured ||
+              nextAttempts >= 3
+            ) {
+              dropPhotoAndProceed = true;
+            } else {
               await enqueueOfflineVisit(entry);
-              photoUploaded = true;
             }
           }
         } catch (photoErr) {
-          console.warn('[OfflineQueue] Photo upload failed during sync:', photoErr);
+          // Network error (fetch throws): still retry next cycle without dropping
+          console.warn(
+            '[OfflineQueue] Photo upload network error during sync:',
+            photoErr
+          );
         }
 
-        // NO SILENT LOSS: If photo upload failed, do NOT send without photo; leave in queue
-        if (!photoUploaded) {
+        if (dropPhotoAndProceed) {
+          entry.photoBlob = null;
+          delete entry.payload.photoKey;
+          entry.payload.photoMissing = true;
+          finalPhotoKey = undefined;
+          finalPhotoMissing = true;
+          await enqueueOfflineVisit(entry);
+        } else if (!photoUploaded) {
           continue;
         }
       }
@@ -302,7 +369,8 @@ export async function syncOfflineVisits(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...entry.payload,
-          photoKey: finalPhotoKey,
+          ...(finalPhotoKey ? { photoKey: finalPhotoKey } : {}),
+          ...(finalPhotoMissing ? { photoMissing: true } : {}),
         }),
       });
 
